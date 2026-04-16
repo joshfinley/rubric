@@ -1,0 +1,54 @@
+# Build
+/target/
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust tooling
+**/*.rs.bk
+
+# Coverage / profiling
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+/coverage/
+
+# Benchmarks
+/criterion/
+
+# Debug
+*.pdb
+*.dSYM/
+core
+perf.data
+perf.data.old
+flamegraph.svg
+cachegrind.out.*
+callgrind.out.*
+massif.out.*
+
+# LLM / AI development aids
+.claude/
+.continue/
+.cursor/
+.aider*
+.copilot/
+.codeium/
+.supermaven/
+.windsurf/
+.tabby/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example

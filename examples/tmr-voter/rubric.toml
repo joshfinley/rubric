@@ -1,0 +1,31 @@
+# Requirements for the TMR voter example.
+#
+# Triple Modular Redundancy (TMR) is a canonical fault-tolerance pattern:
+# run the same computation in three independent channels, then vote on
+# the majority result. Tolerates a single faulty channel. These
+# requirements capture the properties the voter must satisfy.
+
+[meta]
+version = 1
+
+[req.voter.majority_wins]
+description = "When two or three channels agree, the agreed value is returned"
+
+[req.voter.all_agree_passthrough]
+description = "When all three channels report the same value, that value is returned unchanged"
+
+[req.voter.single_fault_tolerance]
+description = "Exactly one divergent channel does not affect the output when the other two agree"
+
+[req.voter.unanimous_disagreement_flagged]
+description = "When all three channels differ, the voter returns an error signaling a recoverable-at-higher-layer fault"
+
+[req.voter.deterministic]
+description = "Identical inputs always produce identical outputs; the voter has no hidden state"
+
+[req.voter.no_std_compatible]
+description = "Implementation compiles against `#![no_std]` with no heap allocation so the voter can run in bare-metal or freestanding contexts"
+# The crate's successful build under `#![no_std]` is itself the
+# verification — no runtime assertion can prove this property, so it's
+# declared externally.
+verified_by = ["tmr_voter::vote"]

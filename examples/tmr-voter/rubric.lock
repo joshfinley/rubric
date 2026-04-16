@@ -1,0 +1,15 @@
+# rubric.lock — managed by `cargo rubric seal`. Do not edit by hand.
+# Format: <requirement_label>	<item_path>	<seal_value>
+# <seal_value> is either `<scheme>:<hex>` (e.g. `body:a3f2b1c8`) or `off`.
+
+voter::all_agree_passthrough	tmr_voter::tests::all_agree_returns_value	body:fef38bda7242d260
+voter::all_agree_passthrough	tmr_voter::vote	body:28b4ddd4e536a6b2
+voter::deterministic	tmr_voter::tests::determinism_across_repeated_calls	body:68ff54539933c844
+voter::deterministic	tmr_voter::vote	body:28b4ddd4e536a6b2
+voter::majority_wins	tmr_voter::tests::two_of_three_win_regardless_of_position	body:ed36aa9287f310af
+voter::majority_wins	tmr_voter::vote	body:28b4ddd4e536a6b2
+voter::no_std_compatible	tmr_voter::vote	body:28b4ddd4e536a6b2
+voter::single_fault_tolerance	tmr_voter::tests::single_divergent_channel_does_not_affect_output	body:4276f5df4ba0569f
+voter::single_fault_tolerance	tmr_voter::vote	body:28b4ddd4e536a6b2
+voter::unanimous_disagreement_flagged	tmr_voter::tests::all_three_differ_surfaces_disagreement	body:90a2a43ff10342d6
+voter::unanimous_disagreement_flagged	tmr_voter::vote	body:28b4ddd4e536a6b2

@@ -1,0 +1,11 @@
+[package]
+name = "rubric-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustc_lexer = "0.1"
+
+[dev-dependencies]
+rubric = { path = "../rubric" }

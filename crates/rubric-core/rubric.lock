@@ -1,0 +1,42 @@
+# rubric.lock — managed by `cargo rubric seal`. Do not edit by hand.
+# Format: <requirement_label>	<item_path>	<seal_value>
+# <seal_value> is either `<scheme>:<hex>` (e.g. `body:a3f2b1c8`) or `off`.
+
+codegen::handles_leaf_and_parent_collision	rubric_core::codegen::render	body:70946d0fa0b4874e
+codegen::handles_leaf_and_parent_collision	rubric_core::codegen::tests::handles_non_leaf_with_leaf_collision	body:fc8299876782c9bc
+codegen::renders_module_tree	rubric_core::codegen::render	body:70946d0fa0b4874e
+codegen::renders_module_tree	rubric_core::codegen::tests::renders_two_leaves_in_one_module	body:7fcb519fe47b01b1
+fnv::is_deterministic	rubric_core::fnv::fnv1a_64	body:e07283218c0a5216
+fnv::is_deterministic	rubric_core::fnv::tests::deterministic_across_calls	body:862a86de70743e85
+fnv::matches_reference_vectors	rubric_core::fnv::fnv1a_64	body:e07283218c0a5216
+fnv::matches_reference_vectors	rubric_core::fnv::tests::known_vector_a	body:fc63202c932719cf
+hash::body_scheme	rubric_core::hash::compute	body:817b4977ec700fbd
+hash::body_scheme	rubric_core::hash::tests::body_scheme_is_deterministic	body:6b830ce7ca11bae5
+lockfile::parse_and_write	rubric_core::lockfile::parse	body:4ea7c30cf9e11b40
+lockfile::parse_and_write	rubric_core::lockfile::tests::round_trips_basic_entries	body:c9e3326dbc630f20
+manifest::builds_from_entries	rubric_core::manifest::parse	body:cba9b37ada9c9c8c
+manifest::builds_from_entries	rubric_core::manifest::tests::parses_sample	body:0384384f50766823
+manifest::preserves_label_path	rubric_core::manifest::parse	body:cba9b37ada9c9c8c
+manifest::preserves_label_path	rubric_core::manifest::tests::parses_sample	body:0384384f50766823
+manifest::requires_description	rubric_core::manifest::build_requirement	body:a40331dde9f04350
+manifest::requires_description	rubric_core::manifest::tests::missing_description_errors	body:c3024eeb3b34eeba
+resolver::tracks_item_path	rubric_core::resolver::scan_enclosing	body:446739f135e8b4e6
+resolver::tracks_item_path	rubric_core::resolver::tests::top_level_fn_path	body:d7942934a6706c3a
+toml_lite::parses_basic_strings	rubric_core::toml_lite::parse	body:66e43533f4f5c77d
+toml_lite::parses_basic_strings	rubric_core::toml_lite::tests::parses_string_escapes	body:ad98dcfa57b0dc68
+toml_lite::parses_integers	rubric_core::toml_lite::parse	body:66e43533f4f5c77d
+toml_lite::parses_integers	rubric_core::toml_lite::tests::parses_section_and_keys	body:1ddaaf55354ed9f2
+toml_lite::parses_section_headers	rubric_core::toml_lite::parse	body:66e43533f4f5c77d
+toml_lite::parses_section_headers	rubric_core::toml_lite::tests::parses_section_and_keys	body:1ddaaf55354ed9f2
+toml_lite::parses_string_arrays	rubric_core::toml_lite::parse	body:66e43533f4f5c77d
+toml_lite::parses_string_arrays	rubric_core::toml_lite::tests::parses_section_and_keys	body:1ddaaf55354ed9f2
+toml_lite::rejects_unterminated_strings	rubric_core::toml_lite::parse	body:66e43533f4f5c77d
+toml_lite::rejects_unterminated_strings	rubric_core::toml_lite::tests::rejects_unterminated_string	body:7dc11488bde21d52
+walker::comment_form_annotations	rubric_core::walker::scan_file	body:685b741d0be6fb40
+walker::comment_form_annotations	rubric_core::walker::tests::finds_comment_form	body:de05147f7092f2c3
+walker::find_attribute_form	rubric_core::walker::scan_file	body:685b741d0be6fb40
+walker::find_attribute_form	rubric_core::walker::tests::finds_attribute_form	body:cc407028cddcd434
+walker::ignore_strings_and_comments	rubric_core::walker::scan_file	body:685b741d0be6fb40
+walker::ignore_strings_and_comments	rubric_core::walker::tests::ignores_lookalike_inside_strings_and_comments	body:3f9365ad0e7014fd
+walker::multi_path_annotations	rubric_core::walker::scan_file	body:685b741d0be6fb40
+walker::multi_path_annotations	rubric_core::walker::tests::multi_path_in_one_attribute	body:a36b48c3b2a2ceda

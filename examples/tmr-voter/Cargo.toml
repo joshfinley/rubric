@@ -1,0 +1,17 @@
+[package]
+name = "tmr-voter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Example consumer — triple modular redundancy voter for safety-critical
+# single-fault tolerance. Doubles as the `no_std` regression guard: any
+# macro expansion that accidentally pulls in `std` or requires an
+# allocator would break this build with a clear lang-item / prelude error.
+
+[dependencies]
+rubric = { path = "../../crates/rubric" }
+
+[build-dependencies]
+rubric-core = { path = "../../crates/rubric-core" }

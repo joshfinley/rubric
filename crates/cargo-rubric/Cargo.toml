@@ -1,0 +1,13 @@
+[package]
+name = "cargo-rubric"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cargo-rubric"
+path = "src/main.rs"
+
+[dependencies]
+rubric-core = { path = "../rubric-core" }
+rubric = { path = "../rubric" }
