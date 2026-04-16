@@ -16,4 +16,4 @@ path = "src/main.rs"
 
 [dependencies]
 rubric-core = { version = "0.1.0", path = "../rubric-core" }
-rubric = { version = "0.1.0", path = "../rubric" }
+rubric = { package = "rubric-attr", version = "0.1.0", path = "../rubric" }

@@ -270,8 +270,9 @@ fn init_crate(crate_root: &Path) -> Result<(), String> {
     let original = std::fs::read_to_string(&cargo_toml).unwrap_or_default();
     let mut edited = original.clone();
     let mut changed = false;
-    if !has_dep(&edited, "bind") {
-        edited = upsert_dep(&edited, "[dependencies]", "rubric", "0.1");
+    if !has_dep(&edited, "rubric") {
+        edited = upsert_dep_inline(&edited, "[dependencies]",
+            r#"rubric = { package = "rubric-attr", version = "0.1" }"#);
         changed = true;
     }
     if !has_dep(&edited, "rubric-core") {
@@ -283,7 +284,7 @@ fn init_crate(crate_root: &Path) -> Result<(), String> {
             .map_err(|e| format!("writing {}: {}", cargo_toml.display(), e))?;
         status("Updating", &rel(&cargo_toml, crate_root));
     } else {
-        status("Skipped", &format!("{} (bind deps already present)", rel(&cargo_toml, crate_root)));
+        status("Skipped", &format!("{} (rubric deps already present)", rel(&cargo_toml, crate_root)));
     }
 
     // lib.rs / main.rs setup!() call.
@@ -348,10 +349,20 @@ fn has_dep(cargo_toml: &str, name: &str) -> bool {
     false
 }
 
+/// Append a pre-formatted dependency line to the given section, creating
+/// the section at the end of the file if it doesn't exist.
+fn upsert_dep_inline(cargo_toml: &str, section: &str, line: &str) -> String {
+    upsert_dep_line(cargo_toml, section, line)
+}
+
 /// Append `name = "version"` to the given section, creating the section
 /// at the end of the file if it doesn't exist. Preserves other content.
 fn upsert_dep(cargo_toml: &str, section: &str, name: &str, version: &str) -> String {
     let line = format!("{} = \"{}\"", name, version);
+    upsert_dep_line(cargo_toml, section, &line)
+}
+
+fn upsert_dep_line(cargo_toml: &str, section: &str, line: &str) -> String {
     let header = section.trim();
 
     let mut lines: Vec<&str> = cargo_toml.lines().collect();

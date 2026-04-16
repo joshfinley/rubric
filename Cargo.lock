@@ -6,12 +6,12 @@ version = 4
 name = "cargo-rubric"
 version = "0.1.0"
 dependencies = [
- "rubric",
+ "rubric-attr",
  "rubric-core",
 ]
 
 [[package]]
-name = "rubric"
+name = "rubric-attr"
 version = "0.1.0"
 dependencies = [
  "rubric-core",
@@ -21,7 +21,7 @@ dependencies = [
 name = "rubric-core"
 version = "0.1.0"
 dependencies = [
- "rubric",
+ "rubric-attr",
  "rustc_lexer",
 ]
 
@@ -38,7 +38,7 @@ dependencies = [
 name = "tmr-voter"
 version = "0.1.0"
 dependencies = [
- "rubric",
+ "rubric-attr",
  "rubric-core",
 ]
 

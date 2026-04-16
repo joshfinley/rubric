@@ -14,4 +14,4 @@ readme = "../../README.md"
 rustc_lexer = "0.1"
 
 [dev-dependencies]
-rubric = { version = "0.1.0", path = "../rubric" }
+rubric = { package = "rubric-attr", version = "0.1.0", path = "../rubric" }

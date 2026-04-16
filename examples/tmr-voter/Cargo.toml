@@ -11,7 +11,7 @@ publish = false
 # allocator would break this build with a clear lang-item / prelude error.
 
 [dependencies]
-rubric = { path = "../../crates/rubric" }
+rubric = { package = "rubric-attr", path = "../../crates/rubric" }
 
 [build-dependencies]
 rubric-core = { path = "../../crates/rubric-core" }

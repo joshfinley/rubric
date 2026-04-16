@@ -1,5 +1,5 @@
 [package]
-name = "rubric"
+name = "rubric-attr"
 description = "Attribute macros for requirements traceability — #[satisfies(...)] and #[verifies(...)]"
 version.workspace = true
 edition.workspace = true
