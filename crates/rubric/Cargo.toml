@@ -14,4 +14,4 @@ readme = "../../README.md"
 proc-macro = true
 
 [dependencies]
-rubric-core = { path = "../rubric-core" }
+rubric-core = { version = "0.1.0", path = "../rubric-core" }
