@@ -25,10 +25,10 @@ _Rubric_ is a cargo subcommand. You declare what the crate must do in a crate-le
 
 ## Usage
 
-Install the CLI from this workspace:
+Install the CLI:
 
 ```bash
-cargo install --path crates/cargo-rubric
+cargo install cargo-rubric
 ```
 
 In a target crate, scaffold the rubric files:
@@ -60,6 +60,8 @@ description = "The greet function returns the string 'hello'"
 ```
 
 ```rust
+// src/main.rs
+
 /// Returns "hello".
 #[satisfies(crate::reqs::greeter::says_hello)]
 pub fn greet() -> &'static str { "hello" }
@@ -138,9 +140,9 @@ None of these are blocking for ordinary use; they shape the ceiling.
 
 ## Contributing
 
-Rubric started from [a podcast episode on traceability](https://music.youtube.com/watch?v=-f6RM7fVPvE&si=j_kM_rOyjrpNhYyA) where the hosts discussing software gaps in the Rust ecosystem for supporting software traceability and document maintenance. This is one person's attempt at a solution, and one person can't know whether it's the right one. The limitations above are the ones I can see; the ones I can't see are the reason this needs other contributors.
+Rubric started from [a podcast episode on traceability](https://music.youtube.com/watch?v=-f6RM7fVPvE&si=j_kM_rOyjrpNhYyA) where the hosts discussing software gaps in the Rust ecosystem for supporting software traceability and document maintenance. This is one person's attempt at a solution, and one person can't know whether it's the right one. The limitations above are the ones I can see; the ones I can't see are the reason this needs other contributors, especially maintainers of open source projects and developers with backgrounds in safety-critical development.
 
-If you work in a domain where traceability matters — safety-critical, regulated, or just a team that's been burned by stale docs — your perspective on what Rubric should actually do is more valuable than code. Issues, design feedback, and use-case reports are all welcome. So are pull requests, of course.
+If you work in a domain where traceability matters — safety-critical, regulated, or just a team that's been burned by stale docs — your perspective on what Rubric should actually do is more valuable than code. Issues, design feedback, and use-case reports are all welcome. And so are pull requests, of course :)
 
 ## License
 
