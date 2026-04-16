@@ -9,9 +9,9 @@ A Rust crate typically involves three artifacts: documentation, application code
 A requirement is the unit of agreement worth tracking. It is a behavioral claim about the system — a "the system shall …" statement — that originates outside the code, in a spec, a ticket, a standard, or a product brief, and that the code is meant to realize. Requirements are the subset of documentation that make verifiable assertions.
 
 ```
-           [ documentation ]
-              /         \
-             v           v
+               [ documentation ]
+                  /         \
+                 v           v
 [ application code ] <----> [ testing code ]
 ```
 
