@@ -147,8 +147,8 @@ impl GapReport {
             v.push(Finding {
                 headline: format!("requirement `{}` has no implementation", label),
                 help: format!(
-                    "add `#[satisfies(crate::reqs::{})]` to the fn that implements it, or remove `[req.{}]` from rubric.toml (replace `::` with `.` in the section header) if the requirement no longer applies",
-                    label, label,
+                    "add `#[satisfies(crate::reqs::{})]` to the fn that implements it, or remove `[req.{}]` from rubric.toml if the requirement no longer applies",
+                    label, label.replace("::", "."),
                 ),
             });
         }
@@ -156,8 +156,8 @@ impl GapReport {
             v.push(Finding {
                 headline: format!("requirement `{}` has no verifying test", label),
                 help: format!(
-                    "add `#[verifies(crate::reqs::{})]` to a test that exercises it, or remove `[req.{}]` from rubric.toml (replace `::` with `.` in the section header) if the requirement no longer applies",
-                    label, label,
+                    "add `#[verifies(crate::reqs::{})]` to a test that exercises it, or remove `[req.{}]` from rubric.toml if the requirement no longer applies",
+                    label, label.replace("::", "."),
                 ),
             });
         }
@@ -166,7 +166,7 @@ impl GapReport {
                 headline: format!("annotation refers to `{}` but that requirement isn't in rubric.toml", label),
                 help: format!(
                     "at {}:{} — either add `[req.{}]` to rubric.toml with a description, or fix the path in the #[satisfies(…)] attribute to match an existing requirement",
-                    file.display(), line, label,
+                    file.display(), line, label.replace("::", "."),
                 ),
             });
         }
@@ -175,7 +175,7 @@ impl GapReport {
                 headline: format!("test annotation refers to `{}` but that requirement isn't in rubric.toml", label),
                 help: format!(
                     "at {}:{} — either add `[req.{}]` to rubric.toml with a description, or fix the path in the #[verifies(…)] attribute",
-                    file.display(), line, label,
+                    file.display(), line, label.replace("::", "."),
                 ),
             });
         }
