@@ -33,8 +33,6 @@ cd path/to/your/crate
 cargo rubric init
 ```
 
-> Not on crates.io yet. Install from a checkout: `cargo install --path crates/cargo-rubric`.
-
 Define a requirement in `rubric.toml`:
 
 ```toml
@@ -114,7 +112,7 @@ An annotation can be written in three ways, shown in the table below. They diffe
 | `cfg_attr` | `#[cfg_attr(any(), satisfies(VOTER-1))]` | Nothing (compiler-inert) |
 | Bare attribute | `#[satisfies(VOTER-1)]` | `rubric-trace-macros` (identity pass-through, ~15 lines) |
 
-`cfg_attr(any(), ...)`: `any()` with no arguments is always false, so the compiler discards the attribute without resolving `satisfies`. No proc-macro, no dependency, no runtime effect. The comment form is more inert still: there's nothing for the compiler to see at all.
+`cfg_attr(any(), ...)`: `any()` with no arguments is always false, so the compiler discards the attribute without resolving `satisfies`. No proc-macro, no dependency, no runtime effect. The comment form is more inert still. There's nothing for the compiler to see at all.
 
 The same applies to `verifies:` / `#[verifies(...)]` on tests. For items no annotation can reach, declare the path directly in `rubric.toml`.
 
@@ -154,6 +152,7 @@ The properties that matter for qualification:
 - **The oracle is standalone.** `cargo rubric check` runs against a source tree without compiling it or expanding any macro. The trust surface is one auditable binary.
 - **The core is pure.** Verification logic in `rubric-trace` is pure functions: no I/O, no globals, no side effects. If an auditor needs a formal treatment, this core is the single target.
 - **Lexing uses the compiler's own lexer.** The scanner uses `rustc_lexer`, the same lexer rustc uses. It lives in the tool and never enters your build graph.
+- **The core tracks itself.** These properties aren't only asserted here. Rubric's pure core carries its own [`rubric.toml`](crates/rubric-trace/rubric.toml): the seal mechanism and every clause of the oracle's check set are requirements, each sealed to the function that realizes it and the test that demonstrates it. `cargo rubric check` runs green on this repository, so a change to the core that slips its test trips the same chain everyone else relies on.
 
 ## Crates
 
@@ -163,11 +162,11 @@ The properties that matter for qualification:
 | `rubric-trace` | Pure verification core | Optional (planned `build.rs` integration) |
 | `rubric-trace-macros` | Identity proc-macros for the bare-attribute form | Optional, comment and `cfg_attr` forms need nothing |
 
-Build-script integration is a planned convenience over the same core: a `build.rs` would call `rubric-trace` to surface `check` findings as `cargo:warning` lines during a normal build. It isn't implemented yet. The standalone oracle is the path of record.
+Build-script integration is a planned convenience over the same core. A `build.rs` would call `rubric-trace` to surface `check` findings as `cargo:warning` lines during a normal build. It isn't implemented yet. The standalone oracle is the path of record.
 
 ## Status
 
-Not yet published to crates.io. All five commands run, including across the members of a Cargo workspace. The pure core in `rubric-trace` is stdlib-only. The scanner and all I/O live in `cargo-rubric`.
+Published on crates.io. All five commands run, including across the members of a Cargo workspace. The pure core in `rubric-trace` is stdlib-only. The scanner and all I/O live in `cargo-rubric`.
 
 Known gaps: `external:` evidence paths aren't yet existence-checked, the `build.rs` face isn't built, and items inside closures or macro bodies aren't scanned (declare those in `rubric.toml`). Annotations in `src/` and in `tests/` (including nested test files and shared `mod` helpers) are scanned.
 

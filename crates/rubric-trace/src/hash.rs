@@ -12,6 +12,7 @@ pub const SCHEME_BODY: &str = "body";
 pub const SCHEME_STMT: &str = "stmt";
 
 /// Compute a seal over already-normalized content.
+// satisfies: SEAL-FORMAT
 pub fn seal(scheme: &str, normalized: &str) -> String {
     format!("{scheme}:{:016x}", fnv1a_64(normalized.as_bytes()))
 }
@@ -31,6 +32,7 @@ pub fn body_seal(normalized_body: &str) -> String {
 mod tests {
     use super::*;
 
+    // verifies: SEAL-FORMAT
     #[test]
     fn format_is_scheme_colon_hex16() {
         let s = seal(SCHEME_BODY, "fnbody");
