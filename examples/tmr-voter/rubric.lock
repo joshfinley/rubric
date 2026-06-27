@@ -1,15 +1,11 @@
-# rubric.lock — managed by `cargo rubric seal`. Do not edit by hand.
-# Format: <requirement_label>	<item_path>	<seal_value>
-# <seal_value> is either `<scheme>:<hex>` (e.g. `body:a3f2b1c8`) or `off`.
+# rubric.lock — managed by `cargo rubric accept`. Do not edit by hand.
+# Format: <requirement_label>\t<item_path>\t<origin>\t<seal>
+# <origin> is `annotation` or `declared`.
+# <seal> is `<scheme>:<hex>` (e.g. `body:a3f2b1c8`, `stmt:...`) or `off`.
 
-voter::all_agree_passthrough	tmr_voter::tests::all_agree_returns_value	body:fef38bda7242d260
-voter::all_agree_passthrough	tmr_voter::vote	body:28b4ddd4e536a6b2
-voter::deterministic	tmr_voter::tests::determinism_across_repeated_calls	body:68ff54539933c844
-voter::deterministic	tmr_voter::vote	body:28b4ddd4e536a6b2
-voter::majority_wins	tmr_voter::tests::two_of_three_win_regardless_of_position	body:ed36aa9287f310af
-voter::majority_wins	tmr_voter::vote	body:28b4ddd4e536a6b2
-voter::no_std_compatible	tmr_voter::vote	body:28b4ddd4e536a6b2
-voter::single_fault_tolerance	tmr_voter::tests::single_divergent_channel_does_not_affect_output	body:4276f5df4ba0569f
-voter::single_fault_tolerance	tmr_voter::vote	body:28b4ddd4e536a6b2
-voter::unanimous_disagreement_flagged	tmr_voter::tests::all_three_differ_surfaces_disagreement	body:90a2a43ff10342d6
-voter::unanimous_disagreement_flagged	tmr_voter::vote	body:28b4ddd4e536a6b2
+TMR-1	<statement>	declared	stmt:d04830e6afe01546
+TMR-1	crate::Tmr::vote	annotation	body:d1d526c86c8f6546
+TMR-1	crate::tests::agreement_wins	annotation	body:470881947b906e95
+TMR-1	tests::integration::unanimous_channels	annotation	body:0d6741a74c8f41eb
+TMR-2	<statement>	declared	stmt:ea68d8374420af40
+TMR-2	crate::tests::order_independent	annotation	body:6473c73a4a757ce0

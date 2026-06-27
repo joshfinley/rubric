@@ -1,5 +1,5 @@
 [package]
-name = "rubric-attr"
+name = "rubric-trace-macros"
 description = "Attribute macros for requirements traceability — #[satisfies(...)] and #[verifies(...)]"
 version.workspace = true
 edition.workspace = true
@@ -14,4 +14,3 @@ readme = "../../README.md"
 proc-macro = true
 
 [dependencies]
-rubric-core = { version = "0.1.0", path = "../rubric-core" }

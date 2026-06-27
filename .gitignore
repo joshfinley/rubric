@@ -52,3 +52,7 @@ massif.out.*
 .env
 .env.*
 !.env.example
+
+# Local working notes (not for commit)
+/issues.md
+/TODO.md
