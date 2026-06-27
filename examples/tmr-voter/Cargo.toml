@@ -1,17 +1,9 @@
 [package]
 name = "tmr-voter"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.0.0"
+edition = "2021"
 publish = false
 
-# Example consumer — triple modular redundancy voter for safety-critical
-# single-fault tolerance. Doubles as the `no_std` regression guard: any
-# macro expansion that accidentally pulls in `std` or requires an
-# allocator would break this build with a clear lang-item / prelude error.
-
+# No rubric dependency: this example uses the comment annotation form,
+# which needs nothing in the build graph.
 [dependencies]
-rubric = { package = "rubric-attr", path = "../../crates/rubric" }
-
-[build-dependencies]
-rubric-core = { path = "../../crates/rubric-core" }

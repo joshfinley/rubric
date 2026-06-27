@@ -1,5 +1,5 @@
 [package]
-name = "rubric-core"
+name = "rubric-trace"
 description = "Shared types and build-time drift detection for the rubric traceability toolchain"
 version.workspace = true
 edition.workspace = true
@@ -10,8 +10,3 @@ keywords.workspace = true
 categories.workspace = true
 readme = "../../README.md"
 
-[dependencies]
-rustc_lexer = "0.1"
-
-[dev-dependencies]
-rubric = { package = "rubric-attr", version = "0.1.0", path = "../rubric" }

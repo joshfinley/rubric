@@ -2,12 +2,13 @@
 //!
 //! Supports the slice we need for `rubric.toml`: comments, dotted section
 //! headers, bare keys, integer/basic-string/string-array values. No
-//! multi-line strings, raw strings, inline tables, or array-of-tables —
-//! the manifest doesn't use them.
+//! multi-line strings, raw strings, inline tables, or array-of-tables.
+//! The manifest doesn't use them.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Integer(i64),
+    Boolean(bool),
     String(String),
     StringArray(Vec<String>),
 }
@@ -20,7 +21,7 @@ pub struct Entry {
     pub line: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     pub line: usize,
     pub msg: String,
@@ -34,7 +35,6 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-// satisfies: toml_lite::parses_section_headers, toml_lite::parses_basic_strings, toml_lite::parses_string_arrays, toml_lite::parses_integers, toml_lite::rejects_unterminated_strings
 pub fn parse(input: &str) -> Result<Vec<Entry>, ParseError> {
     let mut p = Parser { src: input.as_bytes(), pos: 0, line: 1 };
     let mut out = Vec::new();
@@ -193,8 +193,18 @@ impl<'a> Parser<'a> {
             Some(b'"') => Ok(Value::String(self.parse_string()?)),
             Some(b'[') => Ok(Value::StringArray(self.parse_string_array()?)),
             Some(c) if c == b'-' || c.is_ascii_digit() => Ok(Value::Integer(self.parse_integer()?)),
+            Some(c) if c.is_ascii_alphabetic() => self.parse_bool(),
             Some(c) => Err(self.err(&format!("unsupported value starting with '{}'", c as char))),
             None => Err(self.err("expected value, found EOF")),
+        }
+    }
+
+    fn parse_bool(&mut self) -> Result<Value, ParseError> {
+        let word = self.parse_bare_key()?;
+        match word.as_str() {
+            "true" => Ok(Value::Boolean(true)),
+            "false" => Ok(Value::Boolean(false)),
+            other => Err(self.err(&format!("unsupported bare value '{}' (expected true/false)", other))),
         }
     }
 
@@ -217,7 +227,7 @@ impl<'a> Parser<'a> {
                 },
                 Some(b'\n') => return Err(self.err("newline in string")),
                 Some(c) => {
-                    // accept multi-byte UTF-8 by buffering raw bytes; we
+                    // accept multi-byte UTF-8 by buffering raw bytes. We
                     // know the source slice is valid UTF-8.
                     out.push(c as char);
                     if c >= 0x80 {
@@ -267,7 +277,7 @@ impl<'a> Parser<'a> {
 
 fn utf8_len(first: u8) -> usize {
     if first < 0x80 { 1 }
-    else if first < 0xc0 { 1 } // continuation byte — treat as 1 to avoid infinite loop
+    else if first < 0xc0 { 1 } // continuation byte, treat as 1 to avoid infinite loop
     else if first < 0xe0 { 2 }
     else if first < 0xf0 { 3 }
     else { 4 }
@@ -278,9 +288,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[rubric::verifies(crate::reqs::toml_lite::parses_section_headers)]
-    #[rubric::verifies(crate::reqs::toml_lite::parses_integers)]
-    #[rubric::verifies(crate::reqs::toml_lite::parses_string_arrays)]
     fn parses_section_and_keys() {
         let src = r#"
 [meta]
@@ -308,7 +315,6 @@ verified_by  = ["crate::parser::tests::a", "crate::parser::tests::b"]
     }
 
     #[test]
-    #[rubric::verifies(crate::reqs::toml_lite::parses_basic_strings)]
     fn parses_string_escapes() {
         let src = r#"[a]
 k = "hello\nworld"
@@ -318,8 +324,19 @@ k = "hello\nworld"
     }
 
     #[test]
-    #[rubric::verifies(crate::reqs::toml_lite::rejects_unterminated_strings)]
     fn rejects_unterminated_string() {
         assert!(parse("[a]\nk = \"unterminated\n").is_err());
+    }
+
+    #[test]
+    fn parses_booleans() {
+        let e = parse("[a]\nx = true\ny = false\n").unwrap();
+        assert_eq!(e[0].value, Value::Boolean(true));
+        assert_eq!(e[1].value, Value::Boolean(false));
+    }
+
+    #[test]
+    fn rejects_unknown_bare_value() {
+        assert!(parse("[a]\nk = maybe\n").is_err());
     }
 }

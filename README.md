@@ -1,148 +1,179 @@
 # rubric
 
-A requirements traceability tool for Rust crates: declare requirements once, annotate the source that satisfies and the tests that verify them, and let the build pick up drift before it ships.
+Rubric is a requirements traceability tool for Rust. You write down what the crate is meant to do as requirements in a `rubric.toml` file, then annotate the function that satisfies each requirement and the test that verifies it. Rubric records those links and watches them. When a requirement, its function, or its test changes, rubric flags the build, and it stays flagged until someone reviews the change and accepts it.
 
-## What Rubric solves
+## What rubric solves
 
-A Rust crate typically involves three artifacts: documentation, application code, and tests. In some projects — safety-critical firmware, regulated systems, anything with a contractual spec — these three are *required* to stay in agreement. In most others, the team simply *wants* them to. _Rubric_ is built for both: it gives the required-to a mechanism, and the want-to a reason.
-
-A requirement is the unit of agreement worth tracking. It is a behavioral claim about the system — a "the system shall …" statement — that originates outside the code, in a spec, a ticket, a standard, or a product brief, and that the code is meant to realize. Requirements are the subset of documentation that make verifiable assertions.
+A Rust crate typically involves three artifacts: documentation, application code, and tests. In some projects (safety-critical firmware, regulated systems, anything with a contractual spec) these three are *required* to stay in agreement. In most others, the team *wants* them to. Rubric is built for both. Teams that are required to keep these in agreement get a mechanism for it. Teams that just want to get a reason to.
 
 ```
-               [ documentation ]
+               [ requirements ]
                   /         \
                  v           v
 [ application code ] <----> [ testing code ]
 ```
 
-Rustc and cargo couple application code and test code twice. At compile time, tests `use` the code they exercise, so renaming or removing an item breaks the build. At runtime, assertions under `cargo test` give behavioral evidence that the code does what the tests expect. The other two edges are different. Nothing structural ties documentation to the code that realizes it, or to the tests that verify it — and yet that coupling *exists*, it just isn't attributed to any particular requirement. When `cargo test` passes, runtime evidence for the underlying claims exists; that's the definition of a test. The evidence is simply anonymous: the toolchain doesn't know which test corresponds to which requirement, so a passing test counts as generic "the code works" rather than "requirement X holds." Agreement along those edges is the developer's discipline, not the build's accounting.
+Rustc and cargo already couple code and tests. Tests `use` the items they exercise, and `cargo test` produces behavioral evidence. But that evidence is anonymous. The toolchain doesn't know which test corresponds to which requirement, and nothing structural ties a requirement to the code that realizes it. Keeping a requirement in agreement with its code and its tests falls to the developer, and the build doesn't track it.
 
-Rubric doesn't invent a new coupling. It adds names to the couplings already carrying traffic, so the toolchain can check the wiring is still intact.
+Rubric names the couplings that already exist. The toolchain can then check they are still intact.
 
-## How it works
+## The model
 
-_Rubric_ is a cargo subcommand. You declare what the crate must do in a crate-level `rubric.toml`, annotate the functions that satisfy and the tests that verify each requirement, and from the next build onward drift between any of the three artifacts shows up in the normal cargo output — as a warning during development, and as a failure under `--release`.
+Rubric tracks one thing, the **attribution chain**. It is a triplet of
 
-## Usage
+> (requirement, satisfier, verifier)
 
-Install the CLI:
+where the requirement is a labeled statement in `rubric.toml`, the satisfier is the function that realizes it, and the verifier is the test that demonstrates it. All three legs are **sealed**, or content-hashed. A change to the requirement's wording, the satisfier's body, or the verifier's body breaks the seal and fails `cargo rubric check` until the change is accepted.
+
+## Quick start
 
 ```bash
 cargo install cargo-rubric
-```
-
-In a target crate, scaffold the rubric files:
-
-```bash
 cd path/to/your/crate
-
-# Single crate
 cargo rubric init
-
-# Single workspace member
-cargo rubric init -p <member>
-
-# Full workspace
-cargo rubric init --all-members
 ```
 
-`init` wires Rubric into the crate: it drops the manifest and build script at the crate root, adds the crate and the build-time core as dependencies, and installs the setup macro so requirement names resolve as Rust paths. The precise steps live in the command's source comments.
+> Not on crates.io yet. Install from a checkout: `cargo install --path crates/cargo-rubric`.
 
-That's it — Rubric is set up with zero requirements. To add one, define it in `rubric.toml`, annotate the implementing function with `#[satisfies(…)]`, and annotate a verifying test with `#[verifies(…)]`:
+Define a requirement in `rubric.toml`:
 
 ```toml
-# rubric.toml
-[meta]
-version = 1
-
-[req.greeter.says_hello]
-description = "The greet function returns the string 'hello'"
+[req.VOTER-1]
+kind = "functional"
+statement = "Two identical inputs always out-vote the third"
 ```
 
-```rust
-// src/main.rs
+Annotate the code and the test. A plain comment is enough:
 
-/// Returns "hello".
-#[satisfies(crate::reqs::greeter::says_hello)]
-pub fn greet() -> &'static str { "hello" }
+```rust
+// satisfies: VOTER-1
+pub fn vote(a: bool, b: bool, c: bool) -> bool {
+    (a & b) | (b & c) | (a & c)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // verifies: VOTER-1
     #[test]
-    #[verifies(crate::reqs::greeter::says_hello)]
-    fn greet_returns_hello() {
-        assert_eq!(greet(), "hello");
+    fn two_against_one() {
+        assert!(vote(true, true, false));
+        assert!(!vote(false, false, true));
     }
 }
 ```
 
-> A working example of a simple project using Rubric can be found at [`examples/tmr-voter`](examples/tmr-voter).
-
-Now run a normal build. Because the bodies of those two functions have not yet been sealed, the build script will surface them as warnings — these are not errors, the build still succeeds:
-
-```text
-$ cargo build
-   Compiling readmedemo v0.1.0 (/tmp/readmedemo)
-warning: readmedemo@0.1.0: rubric: function body seal missing: `greeter::says_hello` @ `readmedemo::greet` (/tmp/readmedemo/src/lib.rs:4) — run `cargo rubric seal`
-warning: readmedemo@0.1.0: rubric: function body seal missing: `greeter::says_hello` @ `readmedemo::tests::greet_returns_hello` (/tmp/readmedemo/src/lib.rs:11) — run `cargo rubric seal`
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.38s
-```
-
-Each annotation registers a *function body seal* — a reviewed snapshot of the annotated function's body, against which future edits are compared. The seal is produced by content-hashing the function's tokens (whitespace, comments, and doc attributes stripped) and recorded in `rubric.lock` at the crate root. The first time Rubric sees a new annotation, it has no seal to compare against; it asks you to seal the current state. Run:
+Accept the chain, then verify:
 
 ```bash
-cargo rubric seal
+cargo rubric accept   # records the chain and seals all three legs into rubric.lock
+cargo rubric check    # green, run this in CI
 ```
 
-The next build is silent:
+From now on, editing `vote`'s body, gutting the test, or rewording the statement makes `check` fail, naming the requirement:
 
-```text
-$ cargo build
-   Compiling readmedemo v0.1.0 (/tmp/readmedemo)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+```
+✗ VOTER-1 "Two identical inputs always out-vote the third"
+    crate::vote changed since last accept
 ```
 
-From here on, any edit to `greet`'s body will reappear as a `rubric: function body seal broken: …` warning on the next build, prompting you to review the change and re-seal if the new behavior is correct. This is a deliberate compromise between completeness and iterability: Rubric does not (yet) consume test verification results to decide whether the new behavior still satisfies the requirement, but it will not let the drift pass silently — the developer must seal to dispel the warning. A `cargo build --release` elevates these warnings to build failures, so drift cannot ship in a release artifact unintentionally.
+Findings name the requirement and the cited item whose content moved. A
+reformat that changes no tokens leaves the seal intact and `check` green.
 
-`cargo rubric check` runs the same drift pass on demand without compiling the crate, with more verbose, guided output aimed at onboarding. In a workspace, every command above (`init`, `seal`, `check`) detects a workspace root and iterates each member that has a `rubric.toml`.
+Running `cargo rubric accept` re-seals, and the resulting `rubric.lock` diff rides in the pull request. PR review is the attestation step, the same social contract as `Cargo.lock`.
 
-`cargo doc` requires no extra flags or configuration. Because the setup macro emits requirement names as real Rust items, they appear in the generated docs alongside the rest of the API. Each annotated function's page shows which requirements it satisfies or verifies, and a top-level `traceability` module links the full matrix. The traceability output is a side effect of the same `cargo doc` the team already runs.
+## Two files
 
-## The traceability matrix
+- **`rubric.toml`**: the human-authored contract. Requirement definitions (label, kind, statement), plus optional `satisfied_by` / `verified_by` declarations for anything the scanner can't reach: integration tests under `tests/`, bin-only crates, external evidence (`external:docs/lab-report-7.pdf`).
+- **`rubric.lock`**: machine-managed. The attribution chain plus the seal for each leg. Written by `accept`, read by `check`, reviewed in PRs like `Cargo.lock`. Each entry records its origin. The scanner owns *annotation* entries and adds or removes them as annotations come and go. *Declared* entries mirror `rubric.toml`, and a scan leaves them in place.
 
-Traceability, in the safety-critical and systems-engineering sense, is the ability to follow a requirement from its origin through every artifact that implements or verifies it. The canonical representation is a matrix: requirements on one axis, implementations and tests on the other, with cells marking the correspondence. Rubric assembles this matrix from its annotations and surfaces it as part of the crate's own rendered output, so the artifact a maintainer already produces (`cargo doc`) doubles as the traceability evidence an auditor would ask for.
+There's no third file. History and forensics come from version control. See `cargo rubric log` below.
 
-`rubric::setup!()` makes requirement names real Rust items, so they appear in `cargo doc`. Each annotated function gains a `# Satisfies requirements` (or `# Verifies requirements`) section listing the linked requirements, rendered as intra-doc links to per-requirement pages. The per-requirement page carries the description from `rubric.toml` plus the stable identity, so a reader can navigate from any annotated item to the requirement that motivates it. A top-level `traceability` module on the crate's docs renders the whole matrix as a single page, with each row's label linking back to its requirement page.
+## The seal
 
-This part is automatic; the consumer adds nothing beyond `rubric::setup!();` and the per-item annotations.
+Seals are scheme-tagged content hashes (FNV-1a 64 over normalized tokens), one per chain leg:
 
-## Current limitations
+- **`stmt:`** seals the requirement's statement text. Quietly softening "must reject" to "should reject" breaks the chain like any code change.
+- **`body:`** seals the satisfier's body, with whitespace and comments stripped. Reformatting doesn't break it. Any token change does.
+- **`body:`** seals the verifier's body the same way. A gutted or deleted test can no longer vouch for a requirement.
 
-None of these are blocking for ordinary use; they shape the ceiling.
+Token hashes break on refactors that don't change behavior, like renaming a local or reordering independent statements. This is deliberate. In the contexts rubric serves, the two mistakes don't cost the same. A real change that slips past the seal can surface much later as an audit finding. A false alarm only asks you to run `accept` and glance at a diff line that already names the requirement. So rubric over-reports on purpose. Requirements with low tolerance for that noise can set `sig_only = true`, which tracks cited items by existence only.
 
-- **In-tree markdown binding.** The seal system currently tracks drift in annotated Rust functions only. Markdown files in the source tree (`docs/`, crate-level `README.md`, design notes) that reference code items or requirements have no corresponding baseline — if a function changes, the prose that describes it won't trigger a stale warning. Extending the content-hash and seal mechanism to cover items referenced from `.md` files would close the loop on documentation.
+## Git is the ledger
 
-- **Cross-crate requirement edges.** A requirement in crate A satisfied by code in crate B is currently out of scope. Supporting it would require a workspace-global label namespace and cross-crate lockfile coordination, which conflicts with the per-crate ownership model that makes workspace support compose cleanly today.
+`cargo rubric log` walks the git history of `rubric.lock` and renders the seal-event timeline: when each `(requirement, item)` re-sealed, the hash transition, the commit, and the author, with the actual source diff one `git show` away. Rubric keeps no history file of its own, so there's no second format to learn and nothing to grow unbounded or compact. If your history is gone, the source diffs that timeline would point at are gone too.
 
-- **Path resolution for exotic generics and macro-emitted items.** The resolver walks source syntactically using `rustc_lexer`. Items behind deeply nested generics or emitted by third-party proc macros can't always be resolved to a qualified path. An `id = "…"` attribute override (see below) would cover these cases manually.
+## Annotation forms
 
-- **Explicit `id = "…"` attribute override.** When automatic path resolution fails — macro-generated items, foreign-language entrypoints, vendored code — the annotation should accept an explicit identity string so the lockfile can still track the item.
+An annotation can be written in three ways, shown in the table below. They differ only in what they require, and the scanner reads all three into the same chain data. You can mix them within a single crate.
 
-- **Profile-aware strictness without `build.rs`.** Strictness (warnings in dev, errors in release) is currently controlled by the build script detecting the profile. Crates that cannot use a build script have no way to vary strictness by profile.
+| Form | Spelling | Requires |
+|---|---|---|
+| Comment | `// satisfies: VOTER-1` | Nothing |
+| `cfg_attr` | `#[cfg_attr(any(), satisfies(VOTER-1))]` | Nothing (compiler-inert) |
+| Bare attribute | `#[satisfies(VOTER-1)]` | `rubric-trace-macros` (identity pass-through, ~15 lines) |
 
-- **Requirements coverage reporting.** The matrix shows which requirements have implementations and tests, but doesn't yet surface the inverse: requirements with no satisfying code or no verifying tests. This is the difference between "here's what's wired up" and "here's what's missing."
+`cfg_attr(any(), ...)`: `any()` with no arguments is always false, so the compiler discards the attribute without resolving `satisfies`. No proc-macro, no dependency, no runtime effect. The comment form is more inert still: there's nothing for the compiler to see at all.
 
-- **Richer matrix rendering with diff support.** The current matrix is a snapshot. Showing what changed between two seals — new requirements, dropped coverage, broken seals — would make it useful in review, not just in audit.
+The same applies to `verifies:` / `#[verifies(...)]` on tests. For items no annotation can reach, declare the path directly in `rubric.toml`.
 
-- **rustdoc-JSON or librustdoc as an alternative resolver.** The syntactic resolver is fast and dependency-free, but rustdoc's own semantic output would handle generics, trait impls, and re-exports correctly. This could sit behind the existing resolver trait as an opt-in backend for crates that need it.
+Labels are bare requirement IDs (`VOTER-1`, `PARSER-3`), the convention requirements documents already use. There's no module-path namespace and no generated `reqs` module. A typo in a label is caught by `check` as an orphan annotation. The compiler no longer catches it.
+
+Markers live in source text and are present in all builds. Nothing is injected at compile time and nothing needs compiling out. The same source tree yields the same `rubric.lock` on any machine, toolchain, or build profile.
+
+## What `check` verifies
+
+`check` runs each of these as a pure function over `(source, manifest, attribution data)`:
+
+1. Every functional requirement has at least one cited satisfier.
+2. Every requirement (functional or invariant) has at least one cited verifier.
+3. Every cited item path resolves to a real item in the source tree.
+4. Every seal matches its current content: statement, satisfier, and verifier.
+5. Every cited verifier is live: the test exists and isn't `#[ignore]`d.
+6. No orphan annotations (label not defined in the manifest).
+7. No kind violations: a `satisfies` annotation on an `invariant` requirement, which has no satisfying function.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `cargo rubric init` | Scaffold `rubric.toml` in a crate or workspace member |
+| `cargo rubric check` | Read-only oracle verdict, non-zero exit on any finding. Run in CI. |
+| `cargo rubric accept` | Scan annotations and re-seal the chain in one motion. Prints what changed |
+| `cargo rubric trace` | Render the traceability matrix as a standalone markdown report |
+| `cargo rubric log` | Seal-event timeline from the git history of `rubric.lock` |
+
+Of these, two are the ones you run day to day. You run `check` to find out whether the chain is still intact, and `accept` to record a change you meant to make. The matrix from `trace` is a self-contained artifact, suitable for an evidence package. Teams that want it in rustdoc can `include_str!` it into a doc module.
+
+## Safety-critical use
+
+The properties that matter for qualification:
+
+- **Zero rubric dependencies in the consumer's tree.** With the comment or `cfg_attr` forms, no rubric crate appears in `Cargo.toml` at all. There is nothing to qualify in the build graph.
+- **The oracle is standalone.** `cargo rubric check` runs against a source tree without compiling it or expanding any macro. The trust surface is one auditable binary.
+- **The core is pure.** Verification logic in `rubric-trace` is pure functions: no I/O, no globals, no side effects. If an auditor needs a formal treatment, this core is the single target.
+- **Lexing uses the compiler's own lexer.** The scanner uses `rustc_lexer`, the same lexer rustc uses. It lives in the tool and never enters your build graph.
+
+## Crates
+
+| Crate | Role | Needed by consumers? |
+|---|---|---|
+| `cargo-rubric` | CLI + source scanner | No, a standalone tool |
+| `rubric-trace` | Pure verification core | Optional (planned `build.rs` integration) |
+| `rubric-trace-macros` | Identity proc-macros for the bare-attribute form | Optional, comment and `cfg_attr` forms need nothing |
+
+Build-script integration is a planned convenience over the same core: a `build.rs` would call `rubric-trace` to surface `check` findings as `cargo:warning` lines during a normal build. It isn't implemented yet. The standalone oracle is the path of record.
+
+## Status
+
+Not yet published to crates.io. All five commands run, including across the members of a Cargo workspace. The pure core in `rubric-trace` is stdlib-only. The scanner and all I/O live in `cargo-rubric`.
+
+Known gaps: `external:` evidence paths aren't yet existence-checked, the `build.rs` face isn't built, and items inside closures or macro bodies aren't scanned (declare those in `rubric.toml`). Annotations in `src/` and in `tests/` (including nested test files and shared `mod` helpers) are scanned.
 
 ## Contributing
 
-Rubric started from [a podcast episode on traceability](https://music.youtube.com/watch?v=-f6RM7fVPvE&si=j_kM_rOyjrpNhYyA) where the hosts discussing software gaps in the Rust ecosystem for supporting software traceability and document maintenance. This is one person's attempt at a solution, and one person can't know whether it's the right one. The limitations above are the ones I can see; the ones I can't see are the reason this needs other contributors, especially maintainers of open source projects and developers with backgrounds in safety-critical development.
-
-If you work in a domain where traceability matters — safety-critical, regulated, or just a team that's been burned by stale docs — your perspective on what Rubric should actually do is more valuable than code. Issues, design feedback, and use-case reports are all welcome. And so are pull requests, of course :)
+Rubric started from [a podcast episode on traceability](https://music.youtube.com/watch?v=-f6RM7fVPvE&si=j_kM_rOyjrpNhYyA) discussing gaps in the Rust ecosystem for software traceability and document maintenance. The project is early-stage and all contributions are welcome.
 
 ## License
 
