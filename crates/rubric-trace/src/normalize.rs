@@ -12,12 +12,13 @@
 //!   spaces. The core owns this join so the oracle (`check`) and `accept`
 //!   produce identical seal input for the same source.
 //!
-//! Joining significant tokens with a separator is what makes the body
-//! seal reformatting-invariant: `a-1` and `a - 1` both lex to the tokens
+//! Joining significant tokens with a separator makes the body seal
+//! reformatting-invariant. `a-1` and `a - 1` both lex to the tokens
 //! `a`, `-`, `1`, so both normalize to `"a - 1"`. Any real token change
 //! (a renamed local, a flipped operator) changes the join.
 
 /// Canonical form of a requirement statement for the `stmt:` seal.
+// satisfies: SEAL-STMT
 pub fn statement(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -26,6 +27,7 @@ pub fn statement(text: &str) -> String {
 ///
 /// The scanner passes the source text of each token in order, with
 /// whitespace and comment tokens already filtered out.
+// satisfies: SEAL-BODY
 pub fn body_from_tokens<I, S>(tokens: I) -> String
 where
     I: IntoIterator<Item = S>,
@@ -45,11 +47,13 @@ where
 mod tests {
     use super::*;
 
+    // verifies: SEAL-STMT
     #[test]
     fn statement_collapses_whitespace() {
         assert_eq!(statement("  Two   identical\ninputs\tout-vote "), "Two identical inputs out-vote");
     }
 
+    // verifies: SEAL-STMT
     #[test]
     fn statement_reword_changes_form() {
         assert_ne!(statement("must reject"), statement("should reject"));
@@ -61,6 +65,7 @@ mod tests {
         assert_eq!(body_from_tokens(toks), "a - 1");
     }
 
+    // verifies: SEAL-BODY
     #[test]
     fn body_is_reformatting_invariant() {
         // Two lexings of the same logic differing only in source spacing
@@ -70,6 +75,7 @@ mod tests {
         assert_eq!(body_from_tokens(tight), body_from_tokens(loose));
     }
 
+    // verifies: SEAL-BODY
     #[test]
     fn body_token_change_changes_form() {
         let before = ["a", "&", "b"];

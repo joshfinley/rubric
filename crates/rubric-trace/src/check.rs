@@ -100,6 +100,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -298,6 +299,7 @@ mod tests {
         assert!(check(&m, &lock, &scan).is_clean());
     }
 
+    // verifies: CHECK-COVERAGE
     #[test]
     fn missing_satisfier() {
         let (m, lock, mut scan) = clean_scenario();
@@ -306,6 +308,7 @@ mod tests {
         assert!(r.findings.contains(&Finding::MissingSatisfier { req_label: "VOTER-1".into() }));
     }
 
+    // verifies: CHECK-COVERAGE
     #[test]
     fn missing_verifier() {
         let (m, lock, mut scan) = clean_scenario();
@@ -314,6 +317,7 @@ mod tests {
         assert!(r.findings.contains(&Finding::MissingVerifier { req_label: "VOTER-1".into() }));
     }
 
+    // verifies: CHECK-RESOLVE
     #[test]
     fn unresolved_path() {
         let (m, lock, mut scan) = clean_scenario();
@@ -329,6 +333,7 @@ mod tests {
         }));
     }
 
+    // verifies: CHECK-SEAL
     #[test]
     fn broken_body_seal() {
         let (m, lock, mut scan) = clean_scenario();
@@ -342,6 +347,7 @@ mod tests {
             Finding::SealBroken { item_path, .. } if item_path == "crate::voter::vote")));
     }
 
+    // verifies: CHECK-SEAL
     #[test]
     fn broken_statement_seal() {
         let (mut m, lock, scan) = clean_scenario();
@@ -351,6 +357,7 @@ mod tests {
             Finding::SealBroken { item_path, .. } if item_path == STATEMENT_MARKER)));
     }
 
+    // verifies: CHECK-LIVE
     #[test]
     fn dead_verifier_when_ignored() {
         let (m, lock, mut scan) = clean_scenario();
@@ -363,6 +370,20 @@ mod tests {
         assert!(r.findings.iter().any(|f| matches!(f, Finding::DeadVerifier { .. })));
     }
 
+    // verifies: CHECK-LIVE
+    #[test]
+    fn dead_verifier_when_not_a_test() {
+        let (m, lock, mut scan) = clean_scenario();
+        for i in &mut scan.items {
+            if i.is_test {
+                i.is_test = false; // the cited verifier is no longer a test fn
+            }
+        }
+        let r = check(&m, &lock, &scan);
+        assert!(r.findings.iter().any(|f| matches!(f, Finding::DeadVerifier { .. })));
+    }
+
+    // verifies: CHECK-ORPHAN
     #[test]
     fn orphan_annotation() {
         let (m, lock, mut scan) = clean_scenario();
@@ -374,6 +395,7 @@ mod tests {
         }));
     }
 
+    // verifies: CHECK-KIND
     #[test]
     fn kind_violation_satisfies_on_invariant() {
         let m = manifest::parse(
@@ -433,6 +455,9 @@ mod tests {
         assert!(check(&m, &lock, &scan).is_clean());
     }
 
+    // An invariant with a verifier but no satisfier is clean: the
+    // satisfier rule is scoped to functional requirements.
+    // verifies: CHECK-COVERAGE
     #[test]
     fn external_verifier_is_not_dead() {
         let m = manifest::parse(

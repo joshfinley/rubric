@@ -1,0 +1,42 @@
+# rubric.lock — managed by `cargo rubric accept`. Do not edit by hand.
+# Format: <requirement_label>\t<item_path>\t<origin>\t<seal>
+# <origin> is `annotation` or `declared`.
+# <seal> is `<scheme>:<hex>` (e.g. `body:a3f2b1c8`, `stmt:...`) or `off`.
+
+CHECK-COVERAGE	<statement>	declared	stmt:f082863b3ec17846
+CHECK-COVERAGE	crate::check::check	annotation	body:b79d92cf50177a10
+CHECK-COVERAGE	crate::check::tests::external_verifier_is_not_dead	annotation	body:3e2d5f200c152d47
+CHECK-COVERAGE	crate::check::tests::missing_satisfier	annotation	body:0bd5a5b18d343ed5
+CHECK-COVERAGE	crate::check::tests::missing_verifier	annotation	body:e31fb111ca25f917
+CHECK-KIND	<statement>	declared	stmt:e6ebf0b842be9d6d
+CHECK-KIND	crate::check::check	annotation	body:b79d92cf50177a10
+CHECK-KIND	crate::check::tests::kind_violation_satisfies_on_invariant	annotation	body:e9304f2c4a5bb8ca
+CHECK-LIVE	<statement>	declared	stmt:9e4e7fe02d927c6a
+CHECK-LIVE	crate::check::check	annotation	body:b79d92cf50177a10
+CHECK-LIVE	crate::check::tests::dead_verifier_when_ignored	annotation	body:1a5576feb5712046
+CHECK-LIVE	crate::check::tests::dead_verifier_when_not_a_test	annotation	body:5e46f44fa4e631cd
+CHECK-ORPHAN	<statement>	declared	stmt:96f10b8e69f6d40d
+CHECK-ORPHAN	crate::check::check	annotation	body:b79d92cf50177a10
+CHECK-ORPHAN	crate::check::tests::orphan_annotation	annotation	body:84e7b96e65e6d972
+CHECK-RESOLVE	<statement>	declared	stmt:cdab0d7cc8643ed2
+CHECK-RESOLVE	crate::check::check	annotation	body:b79d92cf50177a10
+CHECK-RESOLVE	crate::check::tests::unresolved_path	annotation	body:824dc01d35a83dcd
+CHECK-SEAL	<statement>	declared	stmt:7900a3418172ee32
+CHECK-SEAL	crate::check::check	annotation	body:b79d92cf50177a10
+CHECK-SEAL	crate::check::tests::broken_body_seal	annotation	body:064b46a0e65a7ff0
+CHECK-SEAL	crate::check::tests::broken_statement_seal	annotation	body:be9bcb311a0c86a6
+SEAL-BODY	<statement>	declared	stmt:42ff0add37da5af9
+SEAL-BODY	crate::normalize::body_from_tokens	annotation	body:a9c8c326a30e70a6
+SEAL-BODY	crate::normalize::tests::body_is_reformatting_invariant	annotation	body:de96cfea645ecfb9
+SEAL-BODY	crate::normalize::tests::body_token_change_changes_form	annotation	body:5cb7ff5ee58d281c
+SEAL-FORMAT	<statement>	declared	stmt:fec2518d58cd9e25
+SEAL-FORMAT	crate::hash::seal	annotation	body:66ab0f7be559095c
+SEAL-FORMAT	crate::hash::tests::format_is_scheme_colon_hex16	annotation	body:bfc32c49ca50c694
+SEAL-HASH	<statement>	declared	stmt:adcb92daef54e58f
+SEAL-HASH	crate::fnv::fnv1a_64	annotation	body:beabe207c767a69a
+SEAL-HASH	crate::fnv::tests::deterministic_across_calls	annotation	body:48e30c623e263243
+SEAL-HASH	crate::fnv::tests::known_vector_a	annotation	body:948dafd39cdbd107
+SEAL-STMT	<statement>	declared	stmt:5df263b1a5417213
+SEAL-STMT	crate::normalize::statement	annotation	body:cc951caada1d5f84
+SEAL-STMT	crate::normalize::tests::statement_collapses_whitespace	annotation	body:c901d32f4ca8d3d3
+SEAL-STMT	crate::normalize::tests::statement_reword_changes_form	annotation	body:431bac13f76f1eca

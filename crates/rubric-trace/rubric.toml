@@ -1,0 +1,47 @@
+# Requirements for rubric's pure verification core. Rubric tracks itself
+# here. The seal mechanism and the oracle are the two things the README's
+# safety-critical claims rest on.
+
+# --- The seal ---
+
+[req.SEAL-HASH]
+kind = "functional"
+statement = "Every seal is an FNV-1a 64 hash of its normalized input"
+
+[req.SEAL-FORMAT]
+kind = "functional"
+statement = "A seal renders as a scheme tag joined to sixteen hex digits"
+
+[req.SEAL-BODY]
+kind = "functional"
+statement = "Identical token sequences seal identically; any token change changes the seal"
+
+[req.SEAL-STMT]
+kind = "functional"
+statement = "A statement seal ignores whitespace but breaks on rewording"
+
+# --- The oracle ---
+
+[req.CHECK-COVERAGE]
+kind = "functional"
+statement = "Every functional requirement needs a cited satisfier and every requirement a cited verifier"
+
+[req.CHECK-RESOLVE]
+kind = "functional"
+statement = "Every cited path must resolve to a real item in the tree"
+
+[req.CHECK-SEAL]
+kind = "functional"
+statement = "A recorded seal that no longer matches its content fails the check"
+
+[req.CHECK-LIVE]
+kind = "functional"
+statement = "A cited verifier must be a live, non-ignored test"
+
+[req.CHECK-ORPHAN]
+kind = "functional"
+statement = "An annotation citing a label absent from the manifest is reported as an orphan"
+
+[req.CHECK-KIND]
+kind = "functional"
+statement = "A satisfies citation on an invariant requirement is a kind violation"
