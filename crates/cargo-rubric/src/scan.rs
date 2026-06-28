@@ -773,7 +773,8 @@ impl<'a> FileParser<'a> {
                         self.skip_balanced(j, TokenKind::OpenBrace, TokenKind::CloseBrace);
                     return (close + 1, close + 1);
                 }
-                TokenKind::Semi if paren == 0 && bracket == 0 && angle == 0 => {
+                // `;` ignores `angle`: a `<` operator in a value never nests it.
+                TokenKind::Semi if paren == 0 && bracket == 0 => {
                     return (j + 1, j + 1);
                 }
                 _ => {}
@@ -1215,6 +1216,27 @@ pub type Alias = u8;
         let p = scan_one("pub const fn f() -> u8 { 1 }\n");
         assert_eq!(item(&p, "crate::f").kind, ItemKind::Fn);
         assert_eq!(item(&p, "crate::f").vis, Visibility::Pub);
+    }
+
+    #[test]
+    fn shift_in_const_value_does_not_swallow_following_items() {
+        let p = scan_one("pub const MASK: u32 = 1 << 4;\npub fn after() {}\n");
+        assert_eq!(item(&p, "crate::MASK").kind, ItemKind::Const);
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn comparison_in_static_value_does_not_swallow_following_items() {
+        let p = scan_one("static OK: bool = 3 < 8;\nfn after() {}\n");
+        assert_eq!(item(&p, "crate::OK").kind, ItemKind::Static);
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn array_len_shift_in_tuple_struct_terminates() {
+        let p = scan_one("pub struct A([u8; 1 << 8]);\npub fn after() {}\n");
+        assert_eq!(item(&p, "crate::A").kind, ItemKind::Struct);
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
     }
 
     #[test]
