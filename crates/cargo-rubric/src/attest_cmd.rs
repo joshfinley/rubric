@@ -6,10 +6,11 @@
 //! reconciliation gap it exists to close. It then records the current root
 //! for reconcile requirements in the lock under `<attest>`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rubric_trace::check::{self, Finding, ATTEST_MARKER};
+use rubric_trace::check::{self, Finding, ItemFacts, ATTEST_MARKER};
 use rubric_trace::lock::{self, Entry, Key, Lock, Origin, Seal};
 use rubric_trace::manifest::Requirement;
 
@@ -50,9 +51,11 @@ fn attest_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
         return Ok(true);
     }
 
+    let items: BTreeMap<&str, &ItemFacts> =
+        p.scan.items.iter().map(|i| (i.path.as_str(), i)).collect();
     let mut lock = p.lock.clone();
     for r in &reconcile {
-        let root_seal = check::attestation_root(r, &p.scan);
+        let root_seal = check::attestation_root(r, &p.scan.citations, &items);
         upsert_attest(&mut lock, &r.label, &root_seal);
         println!("attested {}: {root_seal}", r.label);
     }

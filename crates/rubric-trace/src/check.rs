@@ -318,7 +318,7 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
             continue;
         }
         let recorded = rendered_seal(&seals, label, ATTEST_MARKER);
-        if recorded != attestation_root(req, scan) {
+        if recorded != attestation_root(req, &scan.citations, &items) {
             findings.push(Finding::Unreconciled { req_label: label.to_string() });
         }
     }
@@ -330,15 +330,16 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
 /// statement and each cited item's content seal) in deterministic order.
 /// `attest` records this value. `check` recomputes it and compares.
 // satisfies: CHECK-RECONCILE
-pub fn attestation_root(req: &Requirement, scan: &Scan) -> String {
-    let items: BTreeMap<&str, &ItemFacts> =
-        scan.items.iter().map(|i| (i.path.as_str(), i)).collect();
-
+pub fn attestation_root(
+    req: &Requirement,
+    citations: &[Citation],
+    items: &BTreeMap<&str, &ItemFacts>,
+) -> String {
     let mut legs: Vec<(String, String)> = Vec::new();
     if req.seal != SealMode::Off {
         legs.push((STATEMENT_MARKER.to_string(), hash::statement_seal(&req.statement)));
     }
-    for c in &scan.citations {
+    for c in citations {
         if c.req_label != req.label || c.item_path == ATTEST_MARKER {
             continue;
         }
@@ -798,6 +799,12 @@ mod tests {
         assert!(!r.findings.iter().any(|f| matches!(f, Finding::Uncovered { .. })));
     }
 
+    fn root(req: &Requirement, scan: &Scan) -> String {
+        let items: BTreeMap<&str, &ItemFacts> =
+            scan.items.iter().map(|i| (i.path.as_str(), i)).collect();
+        attestation_root(req, &scan.citations, &items)
+    }
+
     // verifies: CHECK-RECONCILE
     #[test]
     fn root_changes_when_any_leg_changes() {
@@ -816,7 +823,7 @@ mod tests {
                 item("crate::t", true, true, false, Some("test one")),
             ],
         };
-        let root1 = attestation_root(req, &scan);
+        let root1 = root(req, &scan);
         assert!(root1.starts_with("attest:"));
 
         let mut scan2 = scan.clone();
@@ -825,7 +832,7 @@ mod tests {
                 i.body = Some("body two".into());
             }
         }
-        assert_ne!(root1, attestation_root(req, &scan2));
+        assert_ne!(root1, root(req, &scan2));
     }
 
     // verifies: CHECK-RECONCILE
@@ -865,7 +872,7 @@ mod tests {
             "R",
             ATTEST_MARKER,
             Origin::Declared,
-            parse_seal(&attestation_root(req, &scan)),
+            parse_seal(&root(req, &scan)),
         ));
         assert!(!check(&m, &lock2, &scan)
             .findings
