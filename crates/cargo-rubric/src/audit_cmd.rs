@@ -90,10 +90,11 @@ fn legs_moved(label: &str, old: &SealMap, new: &SealMap) -> Vec<String> {
         .collect()
 }
 
-/// Whether `label`'s `<attest>` root changed between `old` and `new`.
+/// Whether `label`'s `<attest>` root is present in `new` and differs from
+/// `old`. A removed or unchanged root is not a re-attestation.
 fn attest_moved(label: &str, old: &SealMap, new: &SealMap) -> bool {
     let key = (label.to_string(), ATTEST_MARKER.to_string());
-    old.get(&key) != new.get(&key)
+    new.get(&key).is_some() && old.get(&key) != new.get(&key)
 }
 
 #[cfg(test)]
@@ -122,5 +123,15 @@ mod tests {
         let old = map(&[("R", ATTEST_MARKER, seal("aaaa")), ("OTHER", "crate::x", seal("bbbb"))]);
         let new = map(&[("R", ATTEST_MARKER, seal("cccc")), ("OTHER", "crate::x", seal("eeee"))]);
         assert!(legs_moved("R", &old, &new).is_empty());
+    }
+
+    #[test]
+    fn attest_moved_requires_present_and_changed() {
+        let with = |hex| map(&[("R", ATTEST_MARKER, seal(hex))]);
+        let empty = SealMap::new();
+        assert!(attest_moved("R", &empty, &with("aaaa"))); // introduced
+        assert!(attest_moved("R", &with("aaaa"), &with("bbbb"))); // changed
+        assert!(!attest_moved("R", &with("aaaa"), &with("aaaa"))); // unchanged
+        assert!(!attest_moved("R", &with("aaaa"), &empty)); // removed
     }
 }
