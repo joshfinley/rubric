@@ -368,12 +368,9 @@ pub fn attestation_root(req: &Requirement, scan: &Scan) -> String {
 /// value into the lock. `check` compares the recorded value against it.
 /// Both sides agree by construction.
 pub fn current_seal(req: &Requirement, item: &ItemFacts) -> Option<String> {
-    if req.seal == SealMode::Off {
-        return None;
-    }
-    // External evidence has no body or signature to hash. It is sealed by
-    // its file bytes alone.
-    if is_external(&item.path) {
+    // External evidence has no body or signature to hash. Under any non-off
+    // mode it is sealed by its file bytes alone.
+    if req.seal != SealMode::Off && is_external(&item.path) {
         return item.evidence_seal.clone();
     }
     match req.seal {
