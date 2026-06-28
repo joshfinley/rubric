@@ -37,6 +37,40 @@ chain, plus a temporal audit command.
 - The `sig_only = true` manifest key still parses, mapped to `seal = "off"`.
   Existing `rubric.toml` files keep working.
 
+### Fixed
+
+A pre-release review pass over the 0.2.0 feature set. The reasoning lives here
+because the commits themselves are one line each.
+
+- **Scanner: an unbalanced `<` no longer eats the file.** A `const`/`static`/`type`
+  or tuple struct whose value held a `<<` shift or a `<` comparison ran the item
+  scan to end of file, silently dropping every later item and its annotations. The
+  terminating `;` now ignores angle-bracket depth, which a value's operators can
+  inflate but a generic list never spans.
+- **Scanner: `static mut NAME` is named correctly**, rather than recording the
+  static under `crate::mut`.
+- **Audit: sound leg comparison.** A reconcile leg *removed* in a commit now counts
+  as moved, and a *deleted* `<attest>` root no longer reads as a re-attestation.
+  Each had let a blind accept slip past.
+- **Audit: range scope.** `cargo rubric audit <since>` walks only `<since>..HEAD`,
+  judging a branch on its own commits; the no-arg form stays the full-history
+  forensic report. Same-commit attestation is the working norm.
+- **Oracle: loud mismatches instead of silent drops.** A `satisfies` annotation on
+  a non-function item, a body seal on an item with no body, and a `signature`/`full`
+  seal whose every leg is external evidence are now reported rather than dropped or
+  sealed by existence. A cover member demoted out of its pointcut is reported as
+  dropped coverage rather than vanishing on the next accept.
+- **Pointcut: a stray `*`** (e.g. `crate::api::**`) is rejected instead of parsing
+  and matching nothing.
+- **Accept** no longer carries forward attestation roots for removed or
+  de-reconciled requirements.
+- **Smaller:** the unreconciled message no longer points at `attest` before other
+  findings clear; the item index is built once per check; a dead match arm is gone.
+
+The new `Finding` variants (`MisplacedAnnotation`, `SealModeMismatch`,
+`SealModeOnExternal`, `CoverageDropped`) and the changed `attestation_root`
+signature are additive-but-breaking for the pre-1.0 `rubric-trace` library.
+
 ### Migration
 
 Existing projects stay green. The new checks fire only for requirements that opt
