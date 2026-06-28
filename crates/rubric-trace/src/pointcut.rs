@@ -73,6 +73,11 @@ pub fn parse(s: &str) -> Result<Pointcut, String> {
     if scope.is_empty() {
         return Err(format!("pointcut `{s}` has an empty scope"));
     }
+    if scope.contains('*') {
+        return Err(format!(
+            "pointcut `{s}` has a stray `*` in its scope (only a trailing `::*` is allowed)"
+        ));
+    }
     Ok(Pointcut { vis, kind, scope })
 }
 
@@ -180,6 +185,8 @@ mod tests {
         assert!(parse("pub fn within").is_err()); // no scope
         assert!(parse("pub blah within crate").is_err()); // bad kind
         assert!(parse("pub fn extra within crate").is_err()); // extra head token
+        assert!(parse("pub fn within crate::api::**").is_err()); // stray wildcard
+        assert!(parse("pub fn within crate::*::api").is_err()); // stray wildcard
     }
 
     // verifies: POINTCUT-MATCH

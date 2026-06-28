@@ -60,13 +60,13 @@ POINTCUT-MATCH	crate::pointcut::Pointcut::matches	annotation	body:76821b4cff415d
 POINTCUT-MATCH	crate::pointcut::tests::matches_pub_fn_in_scope_only	annotation	body:80221d52719e94e9
 POINTCUT-MATCH	crate::pointcut::tests::pub_crate_predicate_includes_pub	annotation	body:b7a9111dd4f3b83f
 POINTCUT-MATCH	crate::pointcut::tests::scope_matches_exact_path	annotation	body:5c1f70098ae32008
-POINTCUT-PARSE	<attest>	declared	attest:e044ad676b9da970
+POINTCUT-PARSE	<attest>	declared	attest:067615bf7e6ebb9d
 POINTCUT-PARSE	<statement>	declared	stmt:aea00cf54499b62a
-POINTCUT-PARSE	crate::pointcut::parse	annotation	body:8dfa35290f952044
+POINTCUT-PARSE	crate::pointcut::parse	annotation	body:b86b1c6d3ec17941
 POINTCUT-PARSE	crate::pointcut::tests::item_keyword_is_any_kind	annotation	body:d715f9e5561ef82f
 POINTCUT-PARSE	crate::pointcut::tests::parses_vis_kind_scope	annotation	body:c80cf17b77848099
 POINTCUT-PARSE	crate::pointcut::tests::parses_without_kind_and_strips_wildcard	annotation	body:826ebc0e68094a65
-POINTCUT-PARSE	crate::pointcut::tests::rejects_garbage	annotation	body:d11315400c657af0
+POINTCUT-PARSE	crate::pointcut::tests::rejects_garbage	annotation	body:b124859788b7e44c
 SEAL-BODY	<attest>	declared	attest:37ca91b4f45a1b34
 SEAL-BODY	<statement>	declared	stmt:42ff0add37da5af9
 SEAL-BODY	crate::normalize::body_from_tokens	annotation	body:a9c8c326a30e70a6
