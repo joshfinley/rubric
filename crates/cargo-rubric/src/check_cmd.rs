@@ -102,6 +102,10 @@ fn describe(f: &Finding) -> (String, String) {
             label.clone(),
             format!("'satisfies' on a non-function item; use cover or satisfied_by — {item_path}"),
         ),
+        Finding::SealModeMismatch { req_label, item_path } => (
+            req_label.clone(),
+            format!("body seal on an item with no body; set seal = signature or full — {item_path}"),
+        ),
         Finding::Uncovered { req_label, item_path } => (
             req_label.clone(),
             format!("pub item not covered yet; run accept to acknowledge — {item_path}"),

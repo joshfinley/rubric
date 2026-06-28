@@ -83,6 +83,11 @@ kind = "functional"
 statement = "A satisfies annotation that resolves to a non-function item is reported as misplaced"
 reconcile = true
 
+[req.CHECK-SEALMODE]
+kind = "functional"
+statement = "A body-sealed citation that resolves to an item with no body is reported as a seal-mode mismatch"
+reconcile = true
+
 [req.CHECK-COVER]
 kind = "functional"
 statement = "A pointcut-covered item with no recorded seal is reported as uncovered, while a covered item that drifts is a broken seal"

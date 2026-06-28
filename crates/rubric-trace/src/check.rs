@@ -129,6 +129,9 @@ pub enum Finding {
     /// A `satisfies` annotation on a non-function item. Non-fn items are
     /// bound by `cover` or `satisfied_by`, not by a comment/attribute.
     MisplacedAnnotation { label: String, item_path: String },
+    /// A body-sealed citation resolves to an item with no body to hash. The
+    /// author should pick an explicit seal mode (`signature` or `full`).
+    SealModeMismatch { req_label: String, item_path: String },
     /// A pointcut-covered item has no seal yet (a new `pub` that has not been `accept`ed).
     Uncovered { req_label: String, item_path: String },
     /// A `reconcile` requirement's current leg seals do not match the
@@ -148,7 +151,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -279,6 +282,16 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
                     current,
                 });
             }
+        } else if req.seal == SealMode::Body
+            && !is_external(&c.item_path)
+            && item.body.is_none()
+        {
+            // Body seal but the item has no body to hash. Report it rather
+            // than silently sealing existence-only.
+            findings.push(Finding::SealModeMismatch {
+                req_label: c.req_label.clone(),
+                item_path: c.item_path.clone(),
+            });
         }
     }
 
@@ -618,6 +631,38 @@ mod tests {
             .findings
             .iter()
             .any(|f| matches!(f, Finding::MisplacedAnnotation { .. })));
+    }
+
+    // verifies: CHECK-SEALMODE
+    #[test]
+    fn body_seal_on_a_bodyless_item_is_a_mismatch() {
+        let mut config = item("crate::Config", true, false, false, None);
+        config.kind = ItemKind::Struct;
+        config.signature = Some("pub struct Config".into());
+        let items = vec![config, item("crate::t", true, true, false, Some("ok"))];
+        let cites = vec![
+            cite("R", "crate::Config", Direction::Satisfies, Origin::Declared),
+            cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+        ];
+        let is_mismatch = |f: &Finding| matches!(f, Finding::SealModeMismatch { .. });
+
+        // Default (body) mode: a struct has no body to hash -> mismatch.
+        let body = manifest::parse(
+            "[req.R]\nkind=\"functional\"\nstatement=\"s\"\n\
+             satisfied_by=[\"crate::Config\"]\nverified_by=[\"crate::t\"]\n",
+        )
+        .unwrap();
+        let scan = Scan { citations: cites.clone(), items: items.clone() };
+        assert!(check(&body, &Lock::default(), &scan).findings.iter().any(is_mismatch));
+
+        // Signature mode seals the struct's signature -> no mismatch.
+        let sig = manifest::parse(
+            "[req.R]\nkind=\"functional\"\nstatement=\"s\"\nseal=\"signature\"\n\
+             satisfied_by=[\"crate::Config\"]\nverified_by=[\"crate::t\"]\n",
+        )
+        .unwrap();
+        let scan2 = Scan { citations: cites, items };
+        assert!(!check(&sig, &Lock::default(), &scan2).findings.iter().any(is_mismatch));
     }
 
     /// A `pub fn` item matching a cover pointcut, ready to mutate per test.
