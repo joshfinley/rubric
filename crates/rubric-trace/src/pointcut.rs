@@ -1,8 +1,8 @@
-//! Pointcuts: quantified selectors over scanned items (join points).
+//! Quantified selectors over scanned items (join points).
 //!
 //! A requirement's `cover = "<designator>"` names a set of items by
-//! visibility, kind, and module scope instead of annotating each one. The
-//! census check then requires every matched item to be cited.
+//! visibility, kind, and module scope. The census check then requires
+//! every matched item to be cited.
 //!
 //! Grammar:
 //!
@@ -17,8 +17,8 @@
 
 use crate::check::{ItemFacts, ItemKind, Visibility};
 
-/// A parsed pointcut: a visibility predicate, an optional kind filter, and
-/// a module scope prefix.
+/// Holds a visibility predicate, an optional kind filter, and a module
+/// scope prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pointcut {
     pub vis: VisPred,
@@ -27,8 +27,8 @@ pub struct Pointcut {
     pub scope: String,
 }
 
-/// Visibility predicate. `Pub` matches fully public items; `PubCrate`
-/// matches `pub(crate)` and wider; `Any` matches every visibility.
+/// Visibility predicate. `Pub` matches fully public items. `PubCrate`
+/// matches `pub(crate)` and wider. `Any` matches every visibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisPred {
     Pub,
@@ -43,8 +43,7 @@ pub enum KindPred {
     Only(ItemKind),
 }
 
-/// Parse a `cover` designator. Errors carry a reason for the manifest layer
-/// to report.
+/// Parse a `cover` designator. Errors include a reason string.
 // satisfies: POINTCUT-PARSE
 pub fn parse(s: &str) -> Result<Pointcut, String> {
     let toks: Vec<&str> = s.split_whitespace().collect();
