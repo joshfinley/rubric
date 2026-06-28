@@ -137,6 +137,9 @@ pub enum Finding {
     SealModeOnExternal { req_label: String },
     /// A pointcut-covered item has no seal yet (a new `pub` that has not been `accept`ed).
     Uncovered { req_label: String, item_path: String },
+    /// An item a cover requirement still seals but whose pointcut no longer
+    /// matches it (a `pub` demoted out of the set). `accept` would drop it.
+    CoverageDropped { req_label: String, item_path: String },
     /// A `reconcile` requirement's current leg seals do not match the
     /// recorded `<attest>` root. A leg was re-sealed without a subsequent `attest`.
     Unreconciled { req_label: String },
@@ -154,7 +157,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE, CHECK-EXTSEAL
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE, CHECK-EXTSEAL, CHECK-COVERDROP
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -295,6 +298,26 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
                 req_label: c.req_label.clone(),
                 item_path: c.item_path.clone(),
             });
+        }
+    }
+
+    // Coverage dropped: an item a cover requirement still seals but whose
+    // pointcut no longer matches it (a `pub` demoted out of the set) and that
+    // nothing else cites. `accept` would drop it silently; report it instead.
+    for (label, req) in &reqs {
+        let Some(pc) = &req.cover else { continue };
+        for item in &scan.items {
+            if pc.matches(item) || !seals.contains_key(&(*label, item.path.as_str())) {
+                continue;
+            }
+            let still_cited =
+                scan.citations.iter().any(|c| c.req_label.as_str() == *label && c.item_path == item.path);
+            if !still_cited {
+                findings.push(Finding::CoverageDropped {
+                    req_label: label.to_string(),
+                    item_path: item.path.clone(),
+                });
+            }
         }
     }
 
@@ -797,6 +820,37 @@ mod tests {
         assert!(r.findings.iter().any(|f| matches!(f,
             Finding::SealBroken { item_path, .. } if item_path == "crate::api::connect")));
         assert!(!r.findings.iter().any(|f| matches!(f, Finding::Uncovered { .. })));
+    }
+
+    // verifies: CHECK-COVERDROP
+    #[test]
+    fn demoted_cover_member_is_reported_as_dropped() {
+        let m = manifest::parse(
+            "[req.API]\nkind = \"invariant\"\nstatement = \"s\"\n\
+             seal = \"signature\"\ncover = \"pub fn within crate::api\"\n\
+             verified_by = [\"crate::tests::surface\"]\n",
+        )
+        .unwrap();
+        // `connect` was cover-bound (the lock seals it) but is now private, so
+        // the pointcut no longer matches and the scan stops citing it.
+        let mut connect = covered_item("crate::api::connect", "b");
+        connect.vis = Visibility::Private;
+        let lock = Lock {
+            entries: vec![
+                hash_entry("API", STATEMENT_MARKER, Origin::Declared,
+                    parse_seal(&hash::statement_seal("s"))),
+                hash_entry("API", "crate::api::connect", Origin::Declared,
+                    parse_seal(&hash::signature_seal("pub fn connect ( )"))),
+            ],
+        };
+        let scan = Scan {
+            citations: vec![cite("API", "crate::tests::surface", Direction::Verifies, Origin::Annotation)],
+            items: vec![connect, item("crate::tests::surface", true, true, false, Some("ok"))],
+        };
+        assert!(check(&m, &lock, &scan).findings.contains(&Finding::CoverageDropped {
+            req_label: "API".into(),
+            item_path: "crate::api::connect".into(),
+        }));
     }
 
     fn root(req: &Requirement, scan: &Scan) -> String {

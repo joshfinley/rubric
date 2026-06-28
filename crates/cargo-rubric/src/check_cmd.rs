@@ -114,6 +114,10 @@ fn describe(f: &Finding) -> (String, String) {
             req_label.clone(),
             format!("pub item not covered yet; run accept to acknowledge — {item_path}"),
         ),
+        Finding::CoverageDropped { req_label, item_path } => (
+            req_label.clone(),
+            format!("covered item left the pointcut; run accept to drop it — {item_path}"),
+        ),
         Finding::Unreconciled { req_label } => (
             req_label.clone(),
             "re-sealed but not attested; run `cargo rubric attest` once any other findings clear"
