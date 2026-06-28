@@ -142,10 +142,23 @@ fn escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rubric_trace::check::ItemFacts;
+    use rubric_trace::check::{ItemFacts, ItemKind, Visibility};
 
     fn cite(label: &str, item: &str, dir: Direction, origin: Origin) -> Citation {
         Citation { req_label: label.into(), item_path: item.into(), direction: dir, origin }
+    }
+
+    fn facts(path: &str, is_test: bool, body: &str) -> ItemFacts {
+        ItemFacts {
+            path: path.into(),
+            resolved: true,
+            is_test,
+            is_ignored: false,
+            vis: Visibility::Private,
+            kind: ItemKind::Fn,
+            body: Some(body.into()),
+            signature: None,
+        }
     }
 
     #[test]
@@ -162,9 +175,9 @@ mod tests {
                 cite("TMR-2", "crate::tests::sym", Direction::Verifies, Origin::Annotation),
             ],
             items: vec![
-                ItemFacts { path: "crate::vote".into(), resolved: true, is_test: false, is_ignored: false, body: Some("x".into()) },
-                ItemFacts { path: "crate::tests::t".into(), resolved: true, is_test: true, is_ignored: false, body: Some("y".into()) },
-                ItemFacts { path: "crate::tests::sym".into(), resolved: true, is_test: true, is_ignored: false, body: Some("z".into()) },
+                facts("crate::vote", false, "x"),
+                facts("crate::tests::t", true, "y"),
+                facts("crate::tests::sym", true, "z"),
             ],
         };
         // Empty lock → everything reads as drifted.

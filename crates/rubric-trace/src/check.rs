@@ -46,6 +46,30 @@ pub struct Citation {
     pub origin: Origin,
 }
 
+/// An item's source visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    #[default]
+    Private,
+    /// `pub(crate)`, `pub(super)`, or `pub(in path)`.
+    PubCrate,
+    Pub,
+}
+
+/// The kind of item a citation points at, for pointcut `kind` matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemKind {
+    Fn,
+    Struct,
+    Enum,
+    Union,
+    Const,
+    Static,
+    TypeAlias,
+    Trait,
+    Mod,
+}
+
 /// What the scanner resolved about one cited item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemFacts {
@@ -56,9 +80,16 @@ pub struct ItemFacts {
     pub is_test: bool,
     /// The test is `#[ignore]`d. Only meaningful when `is_test`.
     pub is_ignored: bool,
+    /// The item's visibility, for pointcut matching.
+    pub vis: Visibility,
+    /// The item's kind, for pointcut matching.
+    pub kind: ItemKind,
     /// Normalized body seal input. `None` for `external:` evidence and
     /// other items without a hashable body.
     pub body: Option<String>,
+    /// Normalized signature seal input (visibility through the body brace,
+    /// excluding the block). `None` for items without a hashable signature.
+    pub signature: Option<String>,
 }
 
 /// Everything the scanner discovered, handed to the pure oracle.
@@ -247,7 +278,16 @@ mod tests {
     }
 
     fn item(path: &str, resolved: bool, is_test: bool, is_ignored: bool, body: Option<&str>) -> ItemFacts {
-        ItemFacts { path: path.into(), resolved, is_test, is_ignored, body: body.map(|s| s.into()) }
+        ItemFacts {
+            path: path.into(),
+            resolved,
+            is_test,
+            is_ignored,
+            vis: Visibility::Private,
+            kind: ItemKind::Fn,
+            body: body.map(|s| s.into()),
+            signature: None,
+        }
     }
 
     fn hash_entry(label: &str, item: &str, origin: Origin, seal: Seal) -> Entry {
