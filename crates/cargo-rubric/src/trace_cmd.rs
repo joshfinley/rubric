@@ -123,6 +123,7 @@ fn status_reason(f: &Finding) -> Reason<'_> {
         Finding::KindViolation { req_label, item_path } => {
             Reason::Req(req_label, format!("kind violation `{item_path}`"))
         }
+        Finding::MisplacedAnnotation { label, item_path } => Reason::Orphan(label, item_path),
         Finding::Uncovered { req_label, item_path } => {
             Reason::Req(req_label, format!("uncovered `{item_path}`"))
         }

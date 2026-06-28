@@ -78,6 +78,11 @@ kind = "functional"
 statement = "A satisfies citation on an invariant requirement is a kind violation"
 reconcile = true
 
+[req.CHECK-MISPLACED]
+kind = "functional"
+statement = "A satisfies annotation that resolves to a non-function item is reported as misplaced"
+reconcile = true
+
 [req.CHECK-COVER]
 kind = "functional"
 statement = "A pointcut-covered item with no recorded seal is reported as uncovered, while a covered item that drifts is a broken seal"

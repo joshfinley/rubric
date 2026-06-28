@@ -521,6 +521,7 @@ impl<'a> FileParser<'a> {
             full.push(name.clone());
             full.join("::")
         };
+        self.emit_markers(&pending, &path);
         let sig_start = pending.sig_start.unwrap_or(kw);
         match self.next_sig(name_idx + 1) {
             Some(b) if self.kind(b) == TokenKind::OpenBrace => {
@@ -558,6 +559,17 @@ impl<'a> FileParser<'a> {
             signature: Some(self.normalize_range(sig_start, sig_end)),
             evidence_seal: None,
         });
+    }
+
+    /// Push an item's pending annotations as citations at `path`. Markers on
+    /// a non-fn item still emit, so the oracle can report them as misplaced.
+    fn emit_markers(&mut self, pending: &Pending, path: &str) {
+        for l in &pending.satisfies {
+            self.annotations.push((l.clone(), path.to_string(), Direction::Satisfies));
+        }
+        for l in &pending.verifies {
+            self.annotations.push((l.clone(), path.to_string(), Direction::Verifies));
+        }
     }
 
     fn handle_impl(&mut self) {
@@ -632,6 +644,7 @@ impl<'a> FileParser<'a> {
             full.push(name.clone());
             full.join("::")
         };
+        self.emit_markers(&pending, &path);
         // Scan to the body brace (skipping generics / supertrait bounds).
         let mut j = name_idx + 1;
         let mut body = None;
@@ -692,12 +705,7 @@ impl<'a> FileParser<'a> {
         let sig_start = pending.sig_start.unwrap_or(kw);
         let signature = Some(self.normalize_range(sig_start, sig_end));
 
-        for l in &pending.satisfies {
-            self.annotations.push((l.clone(), path.clone(), Direction::Satisfies));
-        }
-        for l in &pending.verifies {
-            self.annotations.push((l.clone(), path.clone(), Direction::Verifies));
-        }
+        self.emit_markers(&pending, &path);
         self.items.push(ItemFacts {
             path,
             resolved: true,
@@ -743,6 +751,7 @@ impl<'a> FileParser<'a> {
         let path = full.join("::");
 
         let pending = std::mem::take(&mut self.pending);
+        self.emit_markers(&pending, &path);
         let (end_exclusive, after) = self.find_item_end(name_idx + 1);
         let sig_start = pending.sig_start.unwrap_or(kw);
         let signature = Some(self.normalize_range(sig_start, end_exclusive));

@@ -98,6 +98,10 @@ fn describe(f: &Finding) -> (String, String) {
             req_label.clone(),
             format!("'satisfies' on an invariant requirement — {item_path}"),
         ),
+        Finding::MisplacedAnnotation { label, item_path } => (
+            label.clone(),
+            format!("'satisfies' on a non-function item; use cover or satisfied_by — {item_path}"),
+        ),
         Finding::Uncovered { req_label, item_path } => (
             req_label.clone(),
             format!("pub item not covered yet; run accept to acknowledge — {item_path}"),

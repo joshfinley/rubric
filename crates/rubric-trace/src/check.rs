@@ -126,6 +126,9 @@ pub enum Finding {
     OrphanAnnotation { label: String, item_path: String },
     /// `satisfies` on an `invariant` requirement.
     KindViolation { req_label: String, item_path: String },
+    /// A `satisfies` annotation on a non-function item. Non-fn items are
+    /// bound by `cover` or `satisfied_by`, not by a comment/attribute.
+    MisplacedAnnotation { label: String, item_path: String },
     /// A pointcut-covered item has no seal yet (a new `pub` that has not been `accept`ed).
     Uncovered { req_label: String, item_path: String },
     /// A `reconcile` requirement's current leg seals do not match the
@@ -145,7 +148,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -231,6 +234,19 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
                 req_label: c.req_label.clone(),
                 item_path: c.item_path.clone(),
             });
+        }
+
+        // A `satisfies` annotation must land on a function. Non-fn items are
+        // bound by `cover` or `satisfied_by`, not a comment/attribute.
+        if c.direction == Direction::Satisfies
+            && c.origin == Origin::Annotation
+            && item.kind != ItemKind::Fn
+        {
+            findings.push(Finding::MisplacedAnnotation {
+                label: c.req_label.clone(),
+                item_path: c.item_path.clone(),
+            });
+            continue;
         }
 
         // Check 5: dead verifier. External evidence is exempt from the
@@ -564,6 +580,44 @@ mod tests {
             req_label: "INV-1".into(),
             item_path: "crate::f".into(),
         }));
+    }
+
+    // verifies: CHECK-MISPLACED
+    #[test]
+    fn satisfies_annotation_on_non_fn_is_misplaced() {
+        let m = manifest::parse(
+            "[req.R]\nkind = \"functional\"\nstatement = \"s\"\nverified_by = [\"crate::t\"]\n",
+        )
+        .unwrap();
+        let mut config = item("crate::Config", true, false, false, None);
+        config.kind = ItemKind::Struct;
+        config.signature = Some("pub struct Config".into());
+        let items = vec![config, item("crate::t", true, true, false, Some("ok"))];
+
+        // A `satisfies` comment on the struct is misplaced.
+        let scan = Scan {
+            citations: vec![
+                cite("R", "crate::Config", Direction::Satisfies, Origin::Annotation),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: items.clone(),
+        };
+        assert!(check(&m, &Lock::default(), &scan).findings.contains(
+            &Finding::MisplacedAnnotation { label: "R".into(), item_path: "crate::Config".into() }
+        ));
+
+        // A declared (cover/satisfied_by) binding on the same struct is not.
+        let scan2 = Scan {
+            citations: vec![
+                cite("R", "crate::Config", Direction::Satisfies, Origin::Declared),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items,
+        };
+        assert!(!check(&m, &Lock::default(), &scan2)
+            .findings
+            .iter()
+            .any(|f| matches!(f, Finding::MisplacedAnnotation { .. })));
     }
 
     /// A `pub fn` item matching a cover pointcut, ready to mutate per test.
