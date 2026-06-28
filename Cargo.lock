@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "cargo-rubric"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "rubric-trace",
  "rustc_lexer",
@@ -12,11 +12,11 @@ dependencies = [
 
 [[package]]
 name = "rubric-trace"
-version = "0.1.2"
+version = "0.2.0"
 
 [[package]]
 name = "rubric-trace-macros"
-version = "0.1.2"
+version = "0.2.0"
 
 [[package]]
 name = "rustc_lexer"
