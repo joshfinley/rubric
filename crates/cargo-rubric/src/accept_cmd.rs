@@ -82,9 +82,13 @@ fn build_lock(
         }, c.origin, seal);
     }
 
-    // Carry over `<attest>` roots verbatim. `accept` must not recompute them.
+    // Carry over `<attest>` roots verbatim (`accept` must not recompute them),
+    // but only for requirements still present and reconciling. A dropped or
+    // de-reconciled requirement's root is not kept.
     for e in &prev.entries {
-        if e.key.item_path == ATTEST_MARKER {
+        if e.key.item_path == ATTEST_MARKER
+            && reqs.get(e.key.req_label.as_str()).is_some_and(|r| r.reconcile)
+        {
             entries.entry(e.key.clone()).or_insert_with(|| e.clone());
         }
     }
@@ -144,5 +148,34 @@ fn display_item(item_path: &str) -> &str {
         "(statement)"
     } else {
         item_path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attest(label: &str, hex: &str) -> Entry {
+        Entry {
+            key: Key { req_label: label.into(), item_path: ATTEST_MARKER.into() },
+            seal: Seal::Hash { scheme: "attest".into(), hex: hex.into() },
+            origin: Origin::Declared,
+        }
+    }
+
+    #[test]
+    fn build_lock_keeps_only_live_reconcile_attest_roots() {
+        let manifest = rubric_trace::manifest::parse(
+            "[req.R]\nkind=\"functional\"\nstatement=\"s\"\nreconcile=true\nverified_by=[\"crate::t\"]\n",
+        )
+        .unwrap();
+        // prev holds a root for the live `R` and a stale one for removed `GONE`.
+        let prev = Lock { entries: vec![attest("R", "1111"), attest("GONE", "2222")] };
+        let new = build_lock(&manifest, &[], &[], &prev);
+        let has_attest = |label: &str| {
+            new.entries.iter().any(|e| e.key.req_label == label && e.key.item_path == ATTEST_MARKER)
+        };
+        assert!(has_attest("R"));
+        assert!(!has_attest("GONE"));
     }
 }
