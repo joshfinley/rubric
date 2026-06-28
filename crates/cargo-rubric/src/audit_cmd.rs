@@ -10,6 +10,7 @@
 //! changes descendant hashes. Git does not prevent it. Branch protection
 //! provides the immutability.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -70,23 +71,56 @@ fn audit_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
     Ok(clean)
 }
 
-/// Leg seals (anything but `<attest>`) of `label` that were introduced or
-/// re-sealed between `old` and `new`.
+/// Leg seals (anything but `<attest>`) of `label` that differ between `old`
+/// and `new` — introduced, re-sealed, or removed.
 fn legs_moved(label: &str, old: &SealMap, new: &SealMap) -> Vec<String> {
-    let mut moved = Vec::new();
-    for ((req, item), seal) in new {
-        if req != label || item == ATTEST_MARKER {
-            continue;
-        }
-        if old.get(&(req.clone(), item.clone())) != Some(seal) {
-            moved.push(item.clone());
+    let mut items: BTreeSet<&str> = BTreeSet::new();
+    for (req, item) in new.keys().chain(old.keys()) {
+        if req == label && item != ATTEST_MARKER {
+            items.insert(item.as_str());
         }
     }
-    moved
+    items
+        .into_iter()
+        .filter(|item| {
+            let key = (label.to_string(), item.to_string());
+            old.get(&key) != new.get(&key)
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 /// Whether `label`'s `<attest>` root changed between `old` and `new`.
 fn attest_moved(label: &str, old: &SealMap, new: &SealMap) -> bool {
     let key = (label.to_string(), ATTEST_MARKER.to_string());
     old.get(&key) != new.get(&key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rubric_trace::lock::Seal;
+
+    fn seal(hex: &str) -> Seal {
+        Seal::Hash { scheme: "body".into(), hex: hex.into() }
+    }
+
+    fn map(entries: &[(&str, &str, Seal)]) -> SealMap {
+        entries.iter().map(|(r, i, s)| ((r.to_string(), i.to_string()), s.clone())).collect()
+    }
+
+    #[test]
+    fn legs_moved_detects_introduced_resealed_and_removed() {
+        let old = map(&[("R", "crate::f", seal("aaaa")), ("R", "crate::g", seal("bbbb"))]);
+        // f re-sealed, g removed, h introduced.
+        let new = map(&[("R", "crate::f", seal("cccc")), ("R", "crate::h", seal("dddd"))]);
+        assert_eq!(legs_moved("R", &old, &new), vec!["crate::f", "crate::g", "crate::h"]);
+    }
+
+    #[test]
+    fn legs_moved_ignores_attest_and_other_labels() {
+        let old = map(&[("R", ATTEST_MARKER, seal("aaaa")), ("OTHER", "crate::x", seal("bbbb"))]);
+        let new = map(&[("R", ATTEST_MARKER, seal("cccc")), ("OTHER", "crate::x", seal("eeee"))]);
+        assert!(legs_moved("R", &old, &new).is_empty());
+    }
 }
