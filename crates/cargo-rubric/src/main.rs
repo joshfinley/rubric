@@ -5,7 +5,9 @@
 
 mod accept_cmd;
 mod attest_cmd;
+mod audit_cmd;
 mod check_cmd;
+mod git_history;
 mod init_cmd;
 mod log_cmd;
 mod members;
@@ -26,6 +28,7 @@ Commands:
   attest  Record the attestation root for reconcile requirements
   trace   Render the traceability matrix as markdown
   log     Seal history from the git history of rubric.lock
+  audit   Flag commits that re-sealed a reconcile chain without attesting
 ";
 
 fn main() -> ExitCode {
@@ -43,6 +46,7 @@ fn main() -> ExitCode {
         Some("attest") => attest_cmd::run(),
         Some("trace") => trace_cmd::run(),
         Some("log") => log_cmd::run(),
+        Some("audit") => audit_cmd::run(),
         Some("init") => init_cmd::run(&rest),
         _ => {
             eprint!("{USAGE}");
