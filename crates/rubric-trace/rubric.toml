@@ -88,6 +88,11 @@ kind = "functional"
 statement = "A body-sealed citation that resolves to an item with no body is reported as a seal-mode mismatch"
 reconcile = true
 
+[req.CHECK-EXTSEAL]
+kind = "functional"
+statement = "A signature or full seal on a requirement whose every cited item is external evidence is reported as a mismatch"
+reconcile = true
+
 [req.CHECK-COVER]
 kind = "functional"
 statement = "A pointcut-covered item with no recorded seal is reported as uncovered, while a covered item that drifts is a broken seal"

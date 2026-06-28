@@ -106,6 +106,10 @@ fn describe(f: &Finding) -> (String, String) {
             req_label.clone(),
             format!("body seal on an item with no body; set seal = signature or full — {item_path}"),
         ),
+        Finding::SealModeOnExternal { req_label } => (
+            req_label.clone(),
+            "signature/full seal but every cited item is external evidence (file-sealed)".to_string(),
+        ),
         Finding::Uncovered { req_label, item_path } => (
             req_label.clone(),
             format!("pub item not covered yet; run accept to acknowledge — {item_path}"),

@@ -127,6 +127,9 @@ fn status_reason(f: &Finding) -> Reason<'_> {
         Finding::SealModeMismatch { req_label, item_path } => {
             Reason::Req(req_label, format!("seal-mode mismatch `{item_path}`"))
         }
+        Finding::SealModeOnExternal { req_label } => {
+            Reason::Req(req_label, "seal-mode mismatch (all external)".to_string())
+        }
         Finding::Uncovered { req_label, item_path } => {
             Reason::Req(req_label, format!("uncovered `{item_path}`"))
         }

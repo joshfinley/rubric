@@ -132,6 +132,9 @@ pub enum Finding {
     /// A body-sealed citation resolves to an item with no body to hash. The
     /// author should pick an explicit seal mode (`signature` or `full`).
     SealModeMismatch { req_label: String, item_path: String },
+    /// A `signature`/`full` seal on a requirement whose every cited item is
+    /// external evidence, which is file-sealed and cannot honor the mode.
+    SealModeOnExternal { req_label: String },
     /// A pointcut-covered item has no seal yet (a new `pub` that has not been `accept`ed).
     Uncovered { req_label: String, item_path: String },
     /// A `reconcile` requirement's current leg seals do not match the
@@ -151,7 +154,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE, CHECK-EXTSEAL
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -292,6 +295,18 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
                 req_label: c.req_label.clone(),
                 item_path: c.item_path.clone(),
             });
+        }
+    }
+
+    // A signature/full seal needs source content. A requirement whose every
+    // cited item is external evidence (file-sealed) can never honor it.
+    for (label, req) in &reqs {
+        if !matches!(req.seal, SealMode::Signature | SealMode::Full) {
+            continue;
+        }
+        let mut legs = scan.citations.iter().filter(|c| c.req_label.as_str() == *label).peekable();
+        if legs.peek().is_some() && legs.all(|c| is_external(&c.item_path)) {
+            findings.push(Finding::SealModeOnExternal { req_label: label.to_string() });
         }
     }
 
@@ -663,6 +678,46 @@ mod tests {
         .unwrap();
         let scan2 = Scan { citations: cites, items };
         assert!(!check(&sig, &Lock::default(), &scan2).findings.iter().any(is_mismatch));
+    }
+
+    // verifies: CHECK-EXTSEAL
+    #[test]
+    fn full_seal_with_only_external_legs_is_a_mismatch() {
+        let on_ext = |f: &Finding| matches!(f, Finding::SealModeOnExternal { .. });
+        let ext = |path: &str| {
+            let mut i = item(path, true, false, false, None);
+            i.evidence_seal = Some("file:deadbeef".into());
+            i
+        };
+
+        // Every leg external under `full` -> the mode can never apply.
+        let only_ext = manifest::parse(
+            "[req.R]\nkind=\"invariant\"\nstatement=\"s\"\nseal=\"full\"\n\
+             verified_by=[\"external:docs/a.pdf\"]\n",
+        )
+        .unwrap();
+        let scan = Scan {
+            citations: vec![cite("R", "external:docs/a.pdf", Direction::Verifies, Origin::Declared)],
+            items: vec![ext("external:docs/a.pdf")],
+        };
+        assert!(check(&only_ext, &Lock::default(), &scan).findings.iter().any(on_ext));
+
+        // A source leg alongside the external one -> mixed is fine.
+        let mixed = manifest::parse(
+            "[req.R]\nkind=\"functional\"\nstatement=\"s\"\nseal=\"full\"\n\
+             satisfied_by=[\"crate::f\"]\nverified_by=[\"external:docs/a.pdf\"]\n",
+        )
+        .unwrap();
+        let mut f = item("crate::f", true, false, false, Some("b"));
+        f.signature = Some("fn f ( )".into());
+        let scan2 = Scan {
+            citations: vec![
+                cite("R", "crate::f", Direction::Satisfies, Origin::Declared),
+                cite("R", "external:docs/a.pdf", Direction::Verifies, Origin::Declared),
+            ],
+            items: vec![f, ext("external:docs/a.pdf")],
+        };
+        assert!(!check(&mixed, &Lock::default(), &scan2).findings.iter().any(on_ext));
     }
 
     /// A `pub fn` item matching a cover pointcut, ready to mutate per test.

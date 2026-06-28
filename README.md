@@ -230,6 +230,11 @@ What each cited item hashes may be manipulated by `seal`ing mode:
 - `full`: signature and body together
 - `off`: existence only, no content hash
 
+These modes describe source items. External evidence (an `external:` path) is always sealed by
+its file bytes under the `file:` scheme, whatever mode the requirement names. A requirement may
+mix the two, as the example does. One whose every leg is external but which still asks for
+`signature` or `full` has no source to seal, so `check` reports the mismatch.
+
 It's important to note that token hashes intentionally break on refactors that don't
 ostensibly change behavior (e.g., renaming a local or reordering independent statements).
 This was chosen because discipline for such changes is a project _policy_ concern which
