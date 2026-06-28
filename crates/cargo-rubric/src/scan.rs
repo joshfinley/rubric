@@ -717,7 +717,7 @@ impl<'a> FileParser<'a> {
     /// `}` (braced types) or the terminating `;`.
     fn handle_item(&mut self, kind: ItemKind) {
         let kw = self.i;
-        let name_idx = match self.next_sig(self.i + 1) {
+        let mut name_idx = match self.next_sig(self.i + 1) {
             Some(j) if matches!(self.kind(j), TokenKind::Ident | TokenKind::RawIdent) => j,
             _ => {
                 // Not a recognizable item (e.g. `union` used as an ident).
@@ -725,6 +725,18 @@ impl<'a> FileParser<'a> {
                 return;
             }
         };
+        // `static mut NAME`: `mut` is a modifier, the name follows it.
+        if self.slice(name_idx) == "mut" {
+            match self.next_sig(name_idx + 1) {
+                Some(j) if matches!(self.kind(j), TokenKind::Ident | TokenKind::RawIdent) => {
+                    name_idx = j
+                }
+                _ => {
+                    self.i += 1;
+                    return;
+                }
+            }
+        }
         let name = self.slice(name_idx).to_string();
         let mut full = self.path.clone();
         full.push(name);
@@ -1216,6 +1228,15 @@ pub type Alias = u8;
         let p = scan_one("pub const fn f() -> u8 { 1 }\n");
         assert_eq!(item(&p, "crate::f").kind, ItemKind::Fn);
         assert_eq!(item(&p, "crate::f").vis, Visibility::Pub);
+    }
+
+    #[test]
+    fn static_mut_is_named_after_mut() {
+        let p = scan_one("pub static mut COUNTER: u8 = 0;\npub fn after() {}\n");
+        assert_eq!(item(&p, "crate::COUNTER").kind, ItemKind::Static);
+        assert_eq!(item(&p, "crate::COUNTER").vis, Visibility::Pub);
+        assert!(!p.items.iter().any(|i| i.path == "crate::mut"));
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
     }
 
     #[test]
