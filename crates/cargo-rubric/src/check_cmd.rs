@@ -112,7 +112,8 @@ fn describe(f: &Finding) -> (String, String) {
         ),
         Finding::Unreconciled { req_label } => (
             req_label.clone(),
-            "re-sealed but not attested; run `cargo rubric attest` after review".to_string(),
+            "re-sealed but not attested; run `cargo rubric attest` once any other findings clear"
+                .to_string(),
         ),
     }
 }
