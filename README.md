@@ -82,7 +82,16 @@ traceability. However, automated binding of the elements of a requirement
 allows for those bindings to be _enumerated_ one annotation at a time or
 _quantified_ by a [pointcut](https://en.wikipedia.org/wiki/Pointcut)
 that selects a set of items at once. In either case, the binding is
-sealed and becomes an obligation which `cargo rubric check` enforces.
+sealed and becomes an obligation which `cargo rubric check` enforces. 
+All of this is layered over Git as a historical / temporal ledger, which
+is used to carry views over requirements, satisfiers, and verifiers
+across time.
+
+The net result is _obervability and automated tracking of requirements over time_
+in a way that is both distinct from the traceability / AOP origins and capable
+of enabling many of the benefits those paradigms provide - all while retaining
+developer experience boosts for ordinary traceability use cases. This model
+aims to make requirements tracing a development aid rather than a chore.
 
 ## Quick Start
 
@@ -283,6 +292,12 @@ Meaning that a project with healthy CI policies may track such events and respon
 of the way from CI tools specifically designed to audit history integrity, Rubric leaves harsher but
 more effective integrity protection techniques open to this layer. Delayed repository mirrors can still
 use Rubric's CLI if the project has a demonstrated history of Rubric hygiene. Meanwhile, ordinary origin branch protection may be used to defend against more common cases involving careless history rewrites.
+
+The "same commit" wording is the working norm. Rubric reads `accept` and `attest` as two steps of
+authoring one commit rather than two points in time. This may seem conterintuitive, but leaves
+`audit <since>` for a scoped walk to `<since>..HEAD` and plain `audit` free to walk the whole history. `accept` and `attest` produces a healthy reconcilliation commit with re-seals and attests together that
+can be reviewed at a later forensic synchronization point. The tradeoff here grants commit expediency
+on top of traceability.
 
 ## Annotation Forms
 
