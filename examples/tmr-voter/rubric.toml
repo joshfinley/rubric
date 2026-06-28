@@ -1,9 +1,20 @@
 # Requirements for the TMR voter example.
 
-[req.TMR-1]
+# The voter: one high-assurance function. Sealed signature and body, and
+# attested against a failure-mode analysis alongside its unit test.
+[req.TMR-VOTE]
 kind = "functional"
 statement = "Two or more agreeing channels determine the output"
+seal = "full"
+reconcile = true
+verified_by = ["external:docs/tmr-fmea.md"]
 
-[req.TMR-2]
+# A crosscutting concern: every redundant channel is a reviewed public entry
+# point. The cover pointcut is the quantified selector; it binds the channels
+# as satisfiers with no per-channel annotation.
+[req.TMR-CHANNELS]
 kind = "invariant"
-statement = "The vote is independent of channel order"
+statement = "Each redundant channel is an independently reviewed public entry point"
+seal = "full"
+cover = "pub fn within crate::channels"
+reconcile = true

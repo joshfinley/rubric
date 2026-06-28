@@ -1,43 +1,49 @@
-//! Triple modular redundancy (TMR) voter, a worked rubric example.
-//!
-//! Three redundant channels feed a majority vote. The requirements live
-//! in `rubric.toml`. Annotations below name the satisfier and verifiers.
-//! Annotations here are plain comments, so this crate has no rubric
-//! dependency in its build graph.
+//! Triple modular redundancy (TMR): three diverse channels feed a majority
+//! vote. The requirements live in `rubric.toml`. Annotations here are plain
+//! comments, so this crate has no rubric dependency in its build graph.
 
-/// A three-channel redundant voter.
-struct Tmr;
+pub mod channels {
+    //! The redundant channels. There are no rubric annotations in this
+    //! module. The `TMR-CHANNELS` pointcut binds every `pub fn` here. A
+    //! fourth channel added without review fails `check` until accepted.
 
-impl Tmr {
-    /// Majority vote: the output any two or more channels agree on.
-    // satisfies: TMR-1
-    fn vote(a: bool, b: bool, c: bool) -> bool {
-        (a & b) | (b & c) | (a & c)
+    /// Channel A.
+    pub fn channel_a(sample: u8) -> bool {
+        sample >= 3
+    }
+
+    /// Channel B, developed independently of A.
+    pub fn channel_b(sample: u8) -> bool {
+        sample > 2
+    }
+
+    /// Channel C, developed independently of A and B.
+    pub fn channel_c(sample: u8) -> bool {
+        sample / 3 >= 1
     }
 }
 
-/// Public entry point so integration tests can exercise the voter without
-/// reaching private items.
-pub fn majority3(a: bool, b: bool, c: bool) -> bool {
-    Tmr::vote(a, b, c)
+/// Majority vote: the output two or more channels agree on.
+// satisfies: TMR-VOTE
+pub fn vote(a: bool, b: bool, c: bool) -> bool {
+    (a & b) | (b & c) | (a & c)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // verifies: TMR-1
+    // verifies: TMR-VOTE
     #[test]
-    fn agreement_wins() {
-        assert!(majority3(true, true, false));
-        assert!(!majority3(false, false, true));
+    fn majority_decides() {
+        assert!(vote(true, true, false));
+        assert!(!vote(false, false, true));
     }
 
-    // verifies: TMR-2
+    // verifies: TMR-CHANNELS
     #[test]
-    fn order_independent() {
-        for (a, b, c) in [(true, true, false), (true, false, true), (false, true, true)] {
-            assert_eq!(majority3(a, b, c), majority3(c, b, a));
-        }
+    fn channels_agree_on_clear_input() {
+        let s = 9;
+        assert!(channels::channel_a(s) && channels::channel_b(s) && channels::channel_c(s));
     }
 }
