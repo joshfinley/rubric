@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rubric_trace::check::{self, ItemFacts, STATEMENT_MARKER};
+use rubric_trace::check::{self, ItemFacts, ATTEST_MARKER, STATEMENT_MARKER};
 use rubric_trace::hash;
 use rubric_trace::lock::{self, Entry, Key, Lock, Origin, Seal};
 use rubric_trace::manifest::{Manifest, Requirement, SealMode};
@@ -26,7 +26,7 @@ fn accept_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
     }
     let p = project::load(root)?;
 
-    let new = build_lock(&p.manifest, &p.scan.items, &p.scan.citations);
+    let new = build_lock(&p.manifest, &p.scan.items, &p.scan.citations, &p.lock);
     report_diff(&p.lock, &new);
 
     std::fs::write(root.join("rubric.lock"), lock::render(&new))
@@ -37,10 +37,15 @@ fn accept_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
 /// Re-seal: a statement entry per requirement, plus a content entry per
 /// cited item. The requirement's seal mode picks what each entry hashes
 /// (body, signature, both, or nothing). `seal = off` gets `off` seals.
+///
+/// Existing `<attest>` entries are carried over from `prev` untouched.
+/// `attest` writes them. A re-`accept` that moves a leg leaves the stale
+/// root in place, and `check` reports the requirement as unreconciled.
 fn build_lock(
     manifest: &Manifest,
     items: &[ItemFacts],
     citations: &[rubric_trace::check::Citation],
+    prev: &Lock,
 ) -> Lock {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -75,6 +80,13 @@ fn build_lock(
             req_label: c.req_label.clone(),
             item_path: c.item_path.clone(),
         }, c.origin, seal);
+    }
+
+    // Carry over `<attest>` roots verbatim. `accept` must not recompute them.
+    for e in &prev.entries {
+        if e.key.item_path == ATTEST_MARKER {
+            entries.entry(e.key.clone()).or_insert_with(|| e.clone());
+        }
     }
 
     Lock { entries: entries.into_values().collect() }
