@@ -25,6 +25,11 @@ use crate::manifest::{Kind, Manifest, Requirement, SealMode};
 /// Reserved lock item-path for a requirement's statement seal.
 pub const STATEMENT_MARKER: &str = "<statement>";
 
+/// Reserved lock item-path for a requirement's attestation root. `attest`
+/// writes this entry; `accept` does not. A re-seal without re-attestation
+/// is therefore visible.
+pub const ATTEST_MARKER: &str = "<attest>";
+
 /// Stand-in rendered when no accepted seal exists for a cited item yet
 /// (a citation added but not `accept`ed).
 const ABSENT: &str = "(absent)";
@@ -123,6 +128,9 @@ pub enum Finding {
     KindViolation { req_label: String, item_path: String },
     /// A pointcut-covered item has no seal yet (a new `pub` that has not been `accept`ed).
     Uncovered { req_label: String, item_path: String },
+    /// A `reconcile` requirement's current leg seals do not match the
+    /// recorded `<attest>` root. A leg was re-sealed without a subsequent `attest`.
+    Unreconciled { req_label: String },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -137,7 +145,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -258,7 +266,56 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
         }
     }
 
+    // Reconciliation: for each `reconcile` requirement, the current root must
+    // match the recorded `<attest>`. `accept` moves leg seals but leaves
+    // `<attest>` alone. An unattested re-seal stays red until `attest` runs.
+    for (label, req) in &reqs {
+        if !req.reconcile {
+            continue;
+        }
+        let recorded = rendered_seal(&seals, label, ATTEST_MARKER);
+        if recorded != attestation_root(req, scan) {
+            findings.push(Finding::Unreconciled { req_label: label.to_string() });
+        }
+    }
+
     Report { findings }
+}
+
+/// A requirement's attestation root. Hashes its current leg seals (the
+/// statement and each cited item's content seal) in deterministic order.
+/// `attest` records this value. `check` recomputes it and compares.
+// satisfies: CHECK-RECONCILE
+pub fn attestation_root(req: &Requirement, scan: &Scan) -> String {
+    let items: BTreeMap<&str, &ItemFacts> =
+        scan.items.iter().map(|i| (i.path.as_str(), i)).collect();
+
+    let mut legs: Vec<(String, String)> = Vec::new();
+    if req.seal != SealMode::Off {
+        legs.push((STATEMENT_MARKER.to_string(), hash::statement_seal(&req.statement)));
+    }
+    for c in &scan.citations {
+        if c.req_label != req.label || c.item_path == ATTEST_MARKER {
+            continue;
+        }
+        let seal = items
+            .get(c.item_path.as_str())
+            .and_then(|i| current_seal(req, i))
+            .unwrap_or_else(|| "off".to_string());
+        legs.push((c.item_path.clone(), seal));
+    }
+    // One entry per (req, item), matching the lock's keying.
+    legs.sort();
+    legs.dedup();
+
+    let mut input = String::new();
+    for (path, seal) in &legs {
+        input.push_str(path);
+        input.push('=');
+        input.push_str(seal);
+        input.push('\n');
+    }
+    hash::seal(hash::SCHEME_ATTEST, &input)
 }
 
 /// The seal a cited item should currently render to, given its
@@ -588,6 +645,81 @@ mod tests {
         assert!(r.findings.iter().any(|f| matches!(f,
             Finding::SealBroken { item_path, .. } if item_path == "crate::api::connect")));
         assert!(!r.findings.iter().any(|f| matches!(f, Finding::Uncovered { .. })));
+    }
+
+    // verifies: CHECK-RECONCILE
+    #[test]
+    fn root_changes_when_any_leg_changes() {
+        let m = manifest::parse(
+            "[req.R]\nkind = \"functional\"\nstatement = \"s\"\nreconcile = true\n",
+        )
+        .unwrap();
+        let req = &m.requirements[0];
+        let scan = Scan {
+            citations: vec![
+                cite("R", "crate::f", Direction::Satisfies, Origin::Annotation),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                item("crate::f", true, false, false, Some("body one")),
+                item("crate::t", true, true, false, Some("test one")),
+            ],
+        };
+        let root1 = attestation_root(req, &scan);
+        assert!(root1.starts_with("attest:"));
+
+        let mut scan2 = scan.clone();
+        for i in &mut scan2.items {
+            if i.path == "crate::f" {
+                i.body = Some("body two".into());
+            }
+        }
+        assert_ne!(root1, attestation_root(req, &scan2));
+    }
+
+    // verifies: CHECK-RECONCILE
+    #[test]
+    fn unreconciled_until_attest_records_the_root() {
+        let m = manifest::parse(
+            "[req.R]\nkind = \"functional\"\nstatement = \"s\"\nreconcile = true\n",
+        )
+        .unwrap();
+        let req = &m.requirements[0];
+        let scan = Scan {
+            citations: vec![
+                cite("R", "crate::f", Direction::Satisfies, Origin::Annotation),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                item("crate::f", true, false, false, Some("b")),
+                item("crate::t", true, true, false, Some("tb")),
+            ],
+        };
+        // Legs sealed, but no `<attest>` entry: re-sealed without attestation.
+        let lock = Lock {
+            entries: vec![
+                hash_entry("R", STATEMENT_MARKER, Origin::Declared,
+                    parse_seal(&hash::statement_seal("s"))),
+                hash_entry("R", "crate::f", Origin::Annotation, parse_seal(&hash::body_seal("b"))),
+                hash_entry("R", "crate::t", Origin::Annotation, parse_seal(&hash::body_seal("tb"))),
+            ],
+        };
+        assert!(check(&m, &lock, &scan)
+            .findings
+            .contains(&Finding::Unreconciled { req_label: "R".into() }));
+
+        // Record the current root: now reconciled.
+        let mut lock2 = lock.clone();
+        lock2.entries.push(hash_entry(
+            "R",
+            ATTEST_MARKER,
+            Origin::Declared,
+            parse_seal(&attestation_root(req, &scan)),
+        ));
+        assert!(!check(&m, &lock2, &scan)
+            .findings
+            .iter()
+            .any(|f| matches!(f, Finding::Unreconciled { .. })));
     }
 
     #[test]

@@ -102,5 +102,9 @@ fn describe(f: &Finding) -> (String, String) {
             req_label.clone(),
             format!("pub item not covered yet; run accept to acknowledge — {item_path}"),
         ),
+        Finding::Unreconciled { req_label } => (
+            req_label.clone(),
+            "re-sealed but not attested; run `cargo rubric attest` after review".to_string(),
+        ),
     }
 }

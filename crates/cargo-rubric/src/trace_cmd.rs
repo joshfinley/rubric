@@ -126,6 +126,7 @@ fn status_reason(f: &Finding) -> Reason<'_> {
         Finding::Uncovered { req_label, item_path } => {
             Reason::Req(req_label, format!("uncovered `{item_path}`"))
         }
+        Finding::Unreconciled { req_label } => Reason::Req(req_label, "unreconciled".to_string()),
         Finding::OrphanAnnotation { label, item_path } => Reason::Orphan(label, item_path),
     }
 }

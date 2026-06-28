@@ -40,6 +40,10 @@ pub struct Requirement {
     /// satisfiers of this requirement. A matched item with no seal yet
     /// is reported as uncovered.
     pub cover: Option<Pointcut>,
+    /// When set, the requirement's leg seals must reconcile against the
+    /// recorded `<attest>` root. A re-`accept` that moves a leg stays red.
+    /// Run `attest` to record the new root.
+    pub reconcile: bool,
     /// Declared satisfier paths the scanner can't reach (integration
     /// tests, bin-only crates, `external:` evidence).
     pub satisfied_by: Vec<String>,
@@ -129,6 +133,7 @@ fn build_requirement(label: String, items: &[&Entry]) -> Result<Requirement, Par
     let mut statement = String::new();
     let mut seal: Option<SealMode> = None;
     let mut cover: Option<Pointcut> = None;
+    let mut reconcile = false;
     let mut satisfied_by = Vec::new();
     let mut verified_by = Vec::new();
 
@@ -140,6 +145,7 @@ fn build_requirement(label: String, items: &[&Entry]) -> Result<Requirement, Par
             ("cover", Value::String(s)) => {
                 cover = Some(pointcut::parse(s).map_err(|m| err(e.line, &m))?)
             }
+            ("reconcile", Value::Boolean(b)) => reconcile = *b,
             // Back-compat: `sig_only = true` is the former spelling of `seal = "off"`.
             ("sig_only", Value::Boolean(b)) => {
                 if *b {
@@ -157,7 +163,7 @@ fn build_requirement(label: String, items: &[&Entry]) -> Result<Requirement, Par
         return Err(err(line, &format!("[req.{}] is missing `statement`", label)));
     }
     let seal = seal.unwrap_or_default();
-    Ok(Requirement { label, kind, statement, seal, cover, satisfied_by, verified_by })
+    Ok(Requirement { label, kind, statement, seal, cover, reconcile, satisfied_by, verified_by })
 }
 
 fn parse_kind(s: &str, line: usize) -> Result<Kind, ParseError> {

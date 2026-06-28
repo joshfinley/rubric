@@ -67,3 +67,7 @@ statement = "A satisfies citation on an invariant requirement is a kind violatio
 [req.CHECK-COVER]
 kind = "functional"
 statement = "A pointcut-covered item with no recorded seal is reported as uncovered, while a covered item that drifts is a broken seal"
+
+[req.CHECK-RECONCILE]
+kind = "functional"
+statement = "A reconcile requirement whose current leg seals do not match its recorded attestation root is reported as unreconciled"
