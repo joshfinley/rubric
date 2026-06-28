@@ -3,9 +3,15 @@
 # <origin> is `annotation` or `declared`.
 # <seal> is `<scheme>:<hex>` (e.g. `body:a3f2b1c8`, `stmt:...`) or `off`.
 
-TMR-1	<statement>	declared	stmt:d04830e6afe01546
-TMR-1	crate::Tmr::vote	annotation	body:d1d526c86c8f6546
-TMR-1	crate::tests::agreement_wins	annotation	body:470881947b906e95
-TMR-1	tests::integration::unanimous_channels	annotation	body:0d6741a74c8f41eb
-TMR-2	<statement>	declared	stmt:ea68d8374420af40
-TMR-2	crate::tests::order_independent	annotation	body:6473c73a4a757ce0
+TMR-CHANNELS	<attest>	declared	attest:08265f1534cbe5d2
+TMR-CHANNELS	<statement>	declared	stmt:67acbb9617929674
+TMR-CHANNELS	crate::channels::channel_a	declared	full:cd8668449bc281ae
+TMR-CHANNELS	crate::channels::channel_b	declared	full:bc58b74c80dbfa23
+TMR-CHANNELS	crate::channels::channel_c	declared	full:962f932810a3ecda
+TMR-CHANNELS	crate::tests::channels_agree_on_clear_input	annotation	full:5eafe84162319460
+TMR-VOTE	<attest>	declared	attest:6b0d8b56d711534f
+TMR-VOTE	<statement>	declared	stmt:d04830e6afe01546
+TMR-VOTE	crate::tests::majority_decides	annotation	full:81d9941ec5d6735f
+TMR-VOTE	crate::vote	annotation	full:a6f8ecdbaec054dd
+TMR-VOTE	external:docs/tmr-fmea.md	declared	file:66c23b8ebbd0cfdc
+TMR-VOTE	tests::integration::unanimous_inputs	annotation	full:da32ea7516b286b3

@@ -20,10 +20,15 @@ use std::collections::BTreeMap;
 
 use crate::hash;
 use crate::lock::{Lock, Origin, Seal};
-use crate::manifest::{Kind, Manifest, Requirement};
+use crate::manifest::{Kind, Manifest, Requirement, SealMode};
 
 /// Reserved lock item-path for a requirement's statement seal.
 pub const STATEMENT_MARKER: &str = "<statement>";
+
+/// Reserved lock item-path for a requirement's attestation root. `attest`
+/// writes this entry; `accept` does not. A re-seal without re-attestation
+/// is therefore visible.
+pub const ATTEST_MARKER: &str = "<attest>";
 
 /// Stand-in rendered when no accepted seal exists for a cited item yet
 /// (a citation added but not `accept`ed).
@@ -46,6 +51,30 @@ pub struct Citation {
     pub origin: Origin,
 }
 
+/// An item's source visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    #[default]
+    Private,
+    /// `pub(crate)`, `pub(super)`, or `pub(in path)`.
+    PubCrate,
+    Pub,
+}
+
+/// The kind of item a citation points at, for pointcut `kind` matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemKind {
+    Fn,
+    Struct,
+    Enum,
+    Union,
+    Const,
+    Static,
+    TypeAlias,
+    Trait,
+    Mod,
+}
+
 /// What the scanner resolved about one cited item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemFacts {
@@ -56,9 +85,20 @@ pub struct ItemFacts {
     pub is_test: bool,
     /// The test is `#[ignore]`d. Only meaningful when `is_test`.
     pub is_ignored: bool,
+    /// The item's visibility, for pointcut matching.
+    pub vis: Visibility,
+    /// The item's kind, for pointcut matching.
+    pub kind: ItemKind,
     /// Normalized body seal input. `None` for `external:` evidence and
     /// other items without a hashable body.
     pub body: Option<String>,
+    /// Normalized signature seal input (visibility through the body brace,
+    /// excluding the block). `None` for items without a hashable signature.
+    pub signature: Option<String>,
+    /// Precomputed `file:` seal of an `external:` evidence file's bytes,
+    /// filled by the loader (which does the I/O). `None` for source items
+    /// and for evidence that could not be read.
+    pub evidence_seal: Option<String>,
 }
 
 /// Everything the scanner discovered, handed to the pure oracle.
@@ -86,6 +126,23 @@ pub enum Finding {
     OrphanAnnotation { label: String, item_path: String },
     /// `satisfies` on an `invariant` requirement.
     KindViolation { req_label: String, item_path: String },
+    /// A `satisfies` annotation on a non-function item. Non-fn items are
+    /// bound by `cover` or `satisfied_by`, not by a comment/attribute.
+    MisplacedAnnotation { label: String, item_path: String },
+    /// A body-sealed citation resolves to an item with no body to hash. The
+    /// author should pick an explicit seal mode (`signature` or `full`).
+    SealModeMismatch { req_label: String, item_path: String },
+    /// A `signature`/`full` seal on a requirement whose every cited item is
+    /// external evidence, which is file-sealed and cannot honor the mode.
+    SealModeOnExternal { req_label: String },
+    /// A pointcut-covered item has no seal yet (a new `pub` that has not been `accept`ed).
+    Uncovered { req_label: String, item_path: String },
+    /// An item a cover requirement still seals but whose pointcut no longer
+    /// matches it (a `pub` demoted out of the set). `accept` would drop it.
+    CoverageDropped { req_label: String, item_path: String },
+    /// A `reconcile` requirement's current leg seals do not match the
+    /// recorded `<attest>` root. A leg was re-sealed without a subsequent `attest`.
+    Unreconciled { req_label: String },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -100,7 +157,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE, CHECK-EXTSEAL, CHECK-COVERDROP
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -124,9 +181,9 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
         }
     }
 
-    // Check 4a: statement seals. Every non-`sig_only` requirement has one.
+    // Check 4a: statement seals. Requirements with `seal = off` are skipped.
     for (label, req) in &reqs {
-        if req.sig_only {
+        if req.seal == SealMode::Off {
             continue;
         }
         let current = hash::statement_seal(&req.statement);
@@ -176,12 +233,29 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
         }
         let item = item.unwrap();
 
-        // Check 7: kind violation (satisfies on an invariant).
-        if c.direction == Direction::Satisfies && req.kind == Kind::Invariant {
+        // Whether this citation comes from the requirement's cover pointcut.
+        let covered = req.cover.as_ref().is_some_and(|pc| pc.matches(item));
+
+        // Check 7: kind violation (satisfies on an invariant). Cover-pointcut
+        // matches are exempt: a pointcut binds items as satisfiers regardless of kind.
+        if c.direction == Direction::Satisfies && req.kind == Kind::Invariant && !covered {
             findings.push(Finding::KindViolation {
                 req_label: c.req_label.clone(),
                 item_path: c.item_path.clone(),
             });
+        }
+
+        // A `satisfies` annotation must land on a function. Non-fn items are
+        // bound by `cover` or `satisfied_by`, not a comment/attribute.
+        if c.direction == Direction::Satisfies
+            && c.origin == Origin::Annotation
+            && item.kind != ItemKind::Fn
+        {
+            findings.push(Finding::MisplacedAnnotation {
+                label: c.req_label.clone(),
+                item_path: c.item_path.clone(),
+            });
+            continue;
         }
 
         // Check 5: dead verifier. External evidence is exempt from the
@@ -196,25 +270,144 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
             });
         }
 
-        // Check 4b: body seal. Existence-only for `sig_only` requirements
-        // and items without a hashable body (e.g. `external:` evidence).
-        if !req.sig_only {
-            if let Some(body) = &item.body {
-                let current = hash::body_seal(body);
-                let recorded = rendered_seal(&seals, &c.req_label, &c.item_path);
-                if recorded != current {
-                    findings.push(Finding::SealBroken {
-                        req_label: c.req_label.clone(),
-                        item_path: c.item_path.clone(),
-                        recorded,
-                        current,
-                    });
-                }
+        // Checks 4b + census. A covered item with no seal entry yet is an
+        // unacknowledged join point (a new `pub`). Otherwise the seal mode
+        // picks what to hash and a mismatch is drift.
+        let recorded = rendered_seal(&seals, &c.req_label, &c.item_path);
+        if covered && recorded == ABSENT {
+            findings.push(Finding::Uncovered {
+                req_label: c.req_label.clone(),
+                item_path: c.item_path.clone(),
+            });
+        } else if let Some(current) = current_seal(req, item) {
+            if recorded != current {
+                findings.push(Finding::SealBroken {
+                    req_label: c.req_label.clone(),
+                    item_path: c.item_path.clone(),
+                    recorded,
+                    current,
+                });
+            }
+        } else if req.seal == SealMode::Body
+            && !is_external(&c.item_path)
+            && item.body.is_none()
+        {
+            // Body seal but the item has no body to hash. Report it rather
+            // than silently sealing existence-only.
+            findings.push(Finding::SealModeMismatch {
+                req_label: c.req_label.clone(),
+                item_path: c.item_path.clone(),
+            });
+        }
+    }
+
+    // Coverage dropped: an item a cover requirement still seals but whose
+    // pointcut no longer matches it (a `pub` demoted out of the set) and that
+    // nothing else cites. `accept` would drop it silently; report it instead.
+    for (label, req) in &reqs {
+        let Some(pc) = &req.cover else { continue };
+        for item in &scan.items {
+            if pc.matches(item) || !seals.contains_key(&(*label, item.path.as_str())) {
+                continue;
+            }
+            let still_cited =
+                scan.citations.iter().any(|c| c.req_label.as_str() == *label && c.item_path == item.path);
+            if !still_cited {
+                findings.push(Finding::CoverageDropped {
+                    req_label: label.to_string(),
+                    item_path: item.path.clone(),
+                });
             }
         }
     }
 
+    // A signature/full seal needs source content. A requirement whose every
+    // cited item is external evidence (file-sealed) can never honor it.
+    for (label, req) in &reqs {
+        if !matches!(req.seal, SealMode::Signature | SealMode::Full) {
+            continue;
+        }
+        let mut legs = scan.citations.iter().filter(|c| c.req_label.as_str() == *label).peekable();
+        if legs.peek().is_some() && legs.all(|c| is_external(&c.item_path)) {
+            findings.push(Finding::SealModeOnExternal { req_label: label.to_string() });
+        }
+    }
+
+    // Reconciliation: for each `reconcile` requirement, the current root must
+    // match the recorded `<attest>`. `accept` moves leg seals but leaves
+    // `<attest>` alone. An unattested re-seal stays red until `attest` runs.
+    for (label, req) in &reqs {
+        if !req.reconcile {
+            continue;
+        }
+        let recorded = rendered_seal(&seals, label, ATTEST_MARKER);
+        if recorded != attestation_root(req, &scan.citations, &items) {
+            findings.push(Finding::Unreconciled { req_label: label.to_string() });
+        }
+    }
+
     Report { findings }
+}
+
+/// A requirement's attestation root. Hashes its current leg seals (the
+/// statement and each cited item's content seal) in deterministic order.
+/// `attest` records this value. `check` recomputes it and compares.
+// satisfies: CHECK-RECONCILE
+pub fn attestation_root(
+    req: &Requirement,
+    citations: &[Citation],
+    items: &BTreeMap<&str, &ItemFacts>,
+) -> String {
+    let mut legs: Vec<(String, String)> = Vec::new();
+    if req.seal != SealMode::Off {
+        legs.push((STATEMENT_MARKER.to_string(), hash::statement_seal(&req.statement)));
+    }
+    for c in citations {
+        if c.req_label != req.label || c.item_path == ATTEST_MARKER {
+            continue;
+        }
+        let seal = items
+            .get(c.item_path.as_str())
+            .and_then(|i| current_seal(req, i))
+            .unwrap_or_else(|| "off".to_string());
+        legs.push((c.item_path.clone(), seal));
+    }
+    // One entry per (req, item), matching the lock's keying.
+    legs.sort();
+    legs.dedup();
+
+    let mut input = String::new();
+    for (path, seal) in &legs {
+        input.push_str(path);
+        input.push('=');
+        input.push_str(seal);
+        input.push('\n');
+    }
+    hash::seal(hash::SCHEME_ATTEST, &input)
+}
+
+/// The seal a cited item should currently render to, given its
+/// requirement's seal mode. `None` means existence-only (no content hash):
+/// `seal = off`, or an item with no hashable content. `accept` writes this
+/// value into the lock. `check` compares the recorded value against it.
+/// Both sides agree by construction.
+pub fn current_seal(req: &Requirement, item: &ItemFacts) -> Option<String> {
+    // External evidence has no body or signature to hash. Under any non-off
+    // mode it is sealed by its file bytes alone.
+    if req.seal != SealMode::Off && is_external(&item.path) {
+        return item.evidence_seal.clone();
+    }
+    match req.seal {
+        SealMode::Off => None,
+        SealMode::Body => item.body.as_deref().map(hash::body_seal),
+        SealMode::Signature => item.signature.as_deref().map(hash::signature_seal),
+        SealMode::Full => match (item.signature.as_deref(), item.body.as_deref()) {
+            (Some(sig), Some(body)) => Some(hash::full_seal(sig, body)),
+            (Some(sig), None) => Some(hash::signature_seal(sig)),
+            (None, Some(body)) => Some(hash::body_seal(body)),
+            (None, None) => None,
+        },
+    }
 }
 
 fn has_citation(scan: &Scan, label: &str, dir: Direction) -> bool {
@@ -247,7 +440,17 @@ mod tests {
     }
 
     fn item(path: &str, resolved: bool, is_test: bool, is_ignored: bool, body: Option<&str>) -> ItemFacts {
-        ItemFacts { path: path.into(), resolved, is_test, is_ignored, body: body.map(|s| s.into()) }
+        ItemFacts {
+            path: path.into(),
+            resolved,
+            is_test,
+            is_ignored,
+            vis: Visibility::Private,
+            kind: ItemKind::Fn,
+            body: body.map(|s| s.into()),
+            signature: None,
+            evidence_seal: None,
+        }
     }
 
     fn hash_entry(label: &str, item: &str, origin: Origin, seal: Seal) -> Entry {
@@ -426,6 +629,309 @@ mod tests {
             req_label: "INV-1".into(),
             item_path: "crate::f".into(),
         }));
+    }
+
+    // verifies: CHECK-MISPLACED
+    #[test]
+    fn satisfies_annotation_on_non_fn_is_misplaced() {
+        let m = manifest::parse(
+            "[req.R]\nkind = \"functional\"\nstatement = \"s\"\nverified_by = [\"crate::t\"]\n",
+        )
+        .unwrap();
+        let mut config = item("crate::Config", true, false, false, None);
+        config.kind = ItemKind::Struct;
+        config.signature = Some("pub struct Config".into());
+        let items = vec![config, item("crate::t", true, true, false, Some("ok"))];
+
+        // A `satisfies` comment on the struct is misplaced.
+        let scan = Scan {
+            citations: vec![
+                cite("R", "crate::Config", Direction::Satisfies, Origin::Annotation),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: items.clone(),
+        };
+        assert!(check(&m, &Lock::default(), &scan).findings.contains(
+            &Finding::MisplacedAnnotation { label: "R".into(), item_path: "crate::Config".into() }
+        ));
+
+        // A declared (cover/satisfied_by) binding on the same struct is not.
+        let scan2 = Scan {
+            citations: vec![
+                cite("R", "crate::Config", Direction::Satisfies, Origin::Declared),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items,
+        };
+        assert!(!check(&m, &Lock::default(), &scan2)
+            .findings
+            .iter()
+            .any(|f| matches!(f, Finding::MisplacedAnnotation { .. })));
+    }
+
+    // verifies: CHECK-SEALMODE
+    #[test]
+    fn body_seal_on_a_bodyless_item_is_a_mismatch() {
+        let mut config = item("crate::Config", true, false, false, None);
+        config.kind = ItemKind::Struct;
+        config.signature = Some("pub struct Config".into());
+        let items = vec![config, item("crate::t", true, true, false, Some("ok"))];
+        let cites = vec![
+            cite("R", "crate::Config", Direction::Satisfies, Origin::Declared),
+            cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+        ];
+        let is_mismatch = |f: &Finding| matches!(f, Finding::SealModeMismatch { .. });
+
+        // Default (body) mode: a struct has no body to hash -> mismatch.
+        let body = manifest::parse(
+            "[req.R]\nkind=\"functional\"\nstatement=\"s\"\n\
+             satisfied_by=[\"crate::Config\"]\nverified_by=[\"crate::t\"]\n",
+        )
+        .unwrap();
+        let scan = Scan { citations: cites.clone(), items: items.clone() };
+        assert!(check(&body, &Lock::default(), &scan).findings.iter().any(is_mismatch));
+
+        // Signature mode seals the struct's signature -> no mismatch.
+        let sig = manifest::parse(
+            "[req.R]\nkind=\"functional\"\nstatement=\"s\"\nseal=\"signature\"\n\
+             satisfied_by=[\"crate::Config\"]\nverified_by=[\"crate::t\"]\n",
+        )
+        .unwrap();
+        let scan2 = Scan { citations: cites, items };
+        assert!(!check(&sig, &Lock::default(), &scan2).findings.iter().any(is_mismatch));
+    }
+
+    // verifies: CHECK-EXTSEAL
+    #[test]
+    fn full_seal_with_only_external_legs_is_a_mismatch() {
+        let on_ext = |f: &Finding| matches!(f, Finding::SealModeOnExternal { .. });
+        let ext = |path: &str| {
+            let mut i = item(path, true, false, false, None);
+            i.evidence_seal = Some("file:deadbeef".into());
+            i
+        };
+
+        // Every leg external under `full` -> the mode can never apply.
+        let only_ext = manifest::parse(
+            "[req.R]\nkind=\"invariant\"\nstatement=\"s\"\nseal=\"full\"\n\
+             verified_by=[\"external:docs/a.pdf\"]\n",
+        )
+        .unwrap();
+        let scan = Scan {
+            citations: vec![cite("R", "external:docs/a.pdf", Direction::Verifies, Origin::Declared)],
+            items: vec![ext("external:docs/a.pdf")],
+        };
+        assert!(check(&only_ext, &Lock::default(), &scan).findings.iter().any(on_ext));
+
+        // A source leg alongside the external one -> mixed is fine.
+        let mixed = manifest::parse(
+            "[req.R]\nkind=\"functional\"\nstatement=\"s\"\nseal=\"full\"\n\
+             satisfied_by=[\"crate::f\"]\nverified_by=[\"external:docs/a.pdf\"]\n",
+        )
+        .unwrap();
+        let mut f = item("crate::f", true, false, false, Some("b"));
+        f.signature = Some("fn f ( )".into());
+        let scan2 = Scan {
+            citations: vec![
+                cite("R", "crate::f", Direction::Satisfies, Origin::Declared),
+                cite("R", "external:docs/a.pdf", Direction::Verifies, Origin::Declared),
+            ],
+            items: vec![f, ext("external:docs/a.pdf")],
+        };
+        assert!(!check(&mixed, &Lock::default(), &scan2).findings.iter().any(on_ext));
+    }
+
+    /// A `pub fn` item matching a cover pointcut, ready to mutate per test.
+    fn covered_item(path: &str, body: &str) -> ItemFacts {
+        let mut i = item(path, true, false, false, Some(body));
+        i.vis = Visibility::Pub;
+        i.kind = ItemKind::Fn;
+        i.signature = Some(format!("pub fn {} ( )", path.rsplit("::").next().unwrap()));
+        i
+    }
+
+    // verifies: CHECK-COVER
+    #[test]
+    fn uncovered_fires_for_new_pub() {
+        let m = manifest::parse(
+            "[req.NOPUB]\nkind = \"invariant\"\nstatement = \"surface reviewed\"\n\
+             seal = \"full\"\ncover = \"pub fn within crate::api\"\n\
+             verified_by = [\"crate::tests::surface\"]\n",
+        )
+        .unwrap();
+        // Statement sealed, but the covered item has no entry yet.
+        let lock = Lock {
+            entries: vec![hash_entry(
+                "NOPUB",
+                STATEMENT_MARKER,
+                Origin::Declared,
+                parse_seal(&hash::statement_seal("surface reviewed")),
+            )],
+        };
+        let scan = Scan {
+            citations: vec![
+                // The scanner's cover expansion injects this satisfier.
+                cite("NOPUB", "crate::api::connect", Direction::Satisfies, Origin::Declared),
+                cite("NOPUB", "crate::tests::surface", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                covered_item("crate::api::connect", "a + b"),
+                item("crate::tests::surface", true, true, false, Some("ok")),
+            ],
+        };
+        let r = check(&m, &lock, &scan);
+        assert!(r.findings.contains(&Finding::Uncovered {
+            req_label: "NOPUB".into(),
+            item_path: "crate::api::connect".into(),
+        }));
+        // A cover match on an invariant is not a kind violation.
+        assert!(!r.findings.iter().any(|f| matches!(f, Finding::KindViolation { .. })));
+    }
+
+    // verifies: CHECK-COVER
+    #[test]
+    fn covered_drift_is_sealbroken_not_uncovered() {
+        let m = manifest::parse(
+            "[req.NOPUB]\nkind = \"invariant\"\nstatement = \"s\"\n\
+             seal = \"full\"\ncover = \"pub fn within crate::api\"\n\
+             verified_by = [\"crate::tests::surface\"]\n",
+        )
+        .unwrap();
+        let sig = "pub fn connect ( )";
+        let recorded = hash::full_seal(sig, "old body");
+        let lock = Lock {
+            entries: vec![
+                hash_entry("NOPUB", STATEMENT_MARKER, Origin::Declared,
+                    parse_seal(&hash::statement_seal("s"))),
+                hash_entry("NOPUB", "crate::api::connect", Origin::Declared, parse_seal(&recorded)),
+            ],
+        };
+        let scan = Scan {
+            citations: vec![
+                cite("NOPUB", "crate::api::connect", Direction::Satisfies, Origin::Declared),
+                cite("NOPUB", "crate::tests::surface", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                covered_item("crate::api::connect", "new body"), // body drifted
+                item("crate::tests::surface", true, true, false, Some("ok")),
+            ],
+        };
+        let r = check(&m, &lock, &scan);
+        assert!(r.findings.iter().any(|f| matches!(f,
+            Finding::SealBroken { item_path, .. } if item_path == "crate::api::connect")));
+        assert!(!r.findings.iter().any(|f| matches!(f, Finding::Uncovered { .. })));
+    }
+
+    // verifies: CHECK-COVERDROP
+    #[test]
+    fn demoted_cover_member_is_reported_as_dropped() {
+        let m = manifest::parse(
+            "[req.API]\nkind = \"invariant\"\nstatement = \"s\"\n\
+             seal = \"signature\"\ncover = \"pub fn within crate::api\"\n\
+             verified_by = [\"crate::tests::surface\"]\n",
+        )
+        .unwrap();
+        // `connect` was cover-bound (the lock seals it) but is now private, so
+        // the pointcut no longer matches and the scan stops citing it.
+        let mut connect = covered_item("crate::api::connect", "b");
+        connect.vis = Visibility::Private;
+        let lock = Lock {
+            entries: vec![
+                hash_entry("API", STATEMENT_MARKER, Origin::Declared,
+                    parse_seal(&hash::statement_seal("s"))),
+                hash_entry("API", "crate::api::connect", Origin::Declared,
+                    parse_seal(&hash::signature_seal("pub fn connect ( )"))),
+            ],
+        };
+        let scan = Scan {
+            citations: vec![cite("API", "crate::tests::surface", Direction::Verifies, Origin::Annotation)],
+            items: vec![connect, item("crate::tests::surface", true, true, false, Some("ok"))],
+        };
+        assert!(check(&m, &lock, &scan).findings.contains(&Finding::CoverageDropped {
+            req_label: "API".into(),
+            item_path: "crate::api::connect".into(),
+        }));
+    }
+
+    fn root(req: &Requirement, scan: &Scan) -> String {
+        let items: BTreeMap<&str, &ItemFacts> =
+            scan.items.iter().map(|i| (i.path.as_str(), i)).collect();
+        attestation_root(req, &scan.citations, &items)
+    }
+
+    // verifies: CHECK-RECONCILE
+    #[test]
+    fn root_changes_when_any_leg_changes() {
+        let m = manifest::parse(
+            "[req.R]\nkind = \"functional\"\nstatement = \"s\"\nreconcile = true\n",
+        )
+        .unwrap();
+        let req = &m.requirements[0];
+        let scan = Scan {
+            citations: vec![
+                cite("R", "crate::f", Direction::Satisfies, Origin::Annotation),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                item("crate::f", true, false, false, Some("body one")),
+                item("crate::t", true, true, false, Some("test one")),
+            ],
+        };
+        let root1 = root(req, &scan);
+        assert!(root1.starts_with("attest:"));
+
+        let mut scan2 = scan.clone();
+        for i in &mut scan2.items {
+            if i.path == "crate::f" {
+                i.body = Some("body two".into());
+            }
+        }
+        assert_ne!(root1, root(req, &scan2));
+    }
+
+    // verifies: CHECK-RECONCILE
+    #[test]
+    fn unreconciled_until_attest_records_the_root() {
+        let m = manifest::parse(
+            "[req.R]\nkind = \"functional\"\nstatement = \"s\"\nreconcile = true\n",
+        )
+        .unwrap();
+        let req = &m.requirements[0];
+        let scan = Scan {
+            citations: vec![
+                cite("R", "crate::f", Direction::Satisfies, Origin::Annotation),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                item("crate::f", true, false, false, Some("b")),
+                item("crate::t", true, true, false, Some("tb")),
+            ],
+        };
+        // Legs sealed, but no `<attest>` entry: re-sealed without attestation.
+        let lock = Lock {
+            entries: vec![
+                hash_entry("R", STATEMENT_MARKER, Origin::Declared,
+                    parse_seal(&hash::statement_seal("s"))),
+                hash_entry("R", "crate::f", Origin::Annotation, parse_seal(&hash::body_seal("b"))),
+                hash_entry("R", "crate::t", Origin::Annotation, parse_seal(&hash::body_seal("tb"))),
+            ],
+        };
+        assert!(check(&m, &lock, &scan)
+            .findings
+            .contains(&Finding::Unreconciled { req_label: "R".into() }));
+
+        // Record the current root: now reconciled.
+        let mut lock2 = lock.clone();
+        lock2.entries.push(hash_entry(
+            "R",
+            ATTEST_MARKER,
+            Origin::Declared,
+            parse_seal(&root(req, &scan)),
+        ));
+        assert!(!check(&m, &lock2, &scan)
+            .findings
+            .iter()
+            .any(|f| matches!(f, Finding::Unreconciled { .. })));
     }
 
     #[test]

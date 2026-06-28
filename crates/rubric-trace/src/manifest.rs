@@ -1,5 +1,6 @@
 //! `rubric.toml`: the human-authored contract.
 
+use crate::pointcut::{self, Pointcut};
 use crate::toml_lite::{self, Entry, Value};
 
 /// Requirement kind. Functional requirements have a satisfying function;
@@ -10,6 +11,20 @@ pub enum Kind {
     Invariant,
 }
 
+/// How much of a cited item a seal covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SealMode {
+    /// Existence only, no content hash (the former `sig_only`).
+    Off,
+    /// The item's block body (the default).
+    #[default]
+    Body,
+    /// The item's signature (visibility, name, params, return).
+    Signature,
+    /// Signature and body together. A change to either breaks the seal.
+    Full,
+}
+
 /// One `[req.<LABEL>]` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Requirement {
@@ -18,9 +33,17 @@ pub struct Requirement {
     pub kind: Kind,
     /// The statement text. Sealed (`stmt:` scheme) so rewording breaks the chain.
     pub statement: String,
-    /// Track cited items by existence only (no body seals), for projects
-    /// with low tolerance for token-hash false positives.
-    pub sig_only: bool,
+    /// How much of each cited item to seal. `Off` tracks existence only,
+    /// for projects with low tolerance for token-hash false positives.
+    pub seal: SealMode,
+    /// Optional pointcut. When set, matching scanned items are bound as
+    /// satisfiers of this requirement. A matched item with no seal yet
+    /// is reported as uncovered.
+    pub cover: Option<Pointcut>,
+    /// When set, the requirement's leg seals must reconcile against the
+    /// recorded `<attest>` root. A re-`accept` that moves a leg stays red.
+    /// Run `attest` to record the new root.
+    pub reconcile: bool,
     /// Declared satisfier paths the scanner can't reach (integration
     /// tests, bin-only crates, `external:` evidence).
     pub satisfied_by: Vec<String>,
@@ -108,7 +131,9 @@ fn build_requirement(label: String, items: &[&Entry]) -> Result<Requirement, Par
     let line = items.first().map(|e| e.line).unwrap_or(0);
     let mut kind: Option<Kind> = None;
     let mut statement = String::new();
-    let mut sig_only = false;
+    let mut seal: Option<SealMode> = None;
+    let mut cover: Option<Pointcut> = None;
+    let mut reconcile = false;
     let mut satisfied_by = Vec::new();
     let mut verified_by = Vec::new();
 
@@ -116,7 +141,17 @@ fn build_requirement(label: String, items: &[&Entry]) -> Result<Requirement, Par
         match (e.key.as_str(), &e.value) {
             ("kind", Value::String(s)) => kind = Some(parse_kind(s, e.line)?),
             ("statement", Value::String(s)) => statement = s.clone(),
-            ("sig_only", Value::Boolean(b)) => sig_only = *b,
+            ("seal", Value::String(s)) => seal = Some(parse_seal_mode(s, e.line)?),
+            ("cover", Value::String(s)) => {
+                cover = Some(pointcut::parse(s).map_err(|m| err(e.line, &m))?)
+            }
+            ("reconcile", Value::Boolean(b)) => reconcile = *b,
+            // Back-compat: `sig_only = true` is the former spelling of `seal = "off"`.
+            ("sig_only", Value::Boolean(b)) => {
+                if *b {
+                    seal = Some(SealMode::Off);
+                }
+            }
             ("satisfied_by", Value::StringArray(xs)) => satisfied_by = xs.clone(),
             ("verified_by", Value::StringArray(xs)) => verified_by = xs.clone(),
             (k, _) => return Err(err(e.line, &format!("unknown or wrongly-typed key '{}' in [req.{}]", k, label))),
@@ -127,7 +162,8 @@ fn build_requirement(label: String, items: &[&Entry]) -> Result<Requirement, Par
     if statement.is_empty() {
         return Err(err(line, &format!("[req.{}] is missing `statement`", label)));
     }
-    Ok(Requirement { label, kind, statement, sig_only, satisfied_by, verified_by })
+    let seal = seal.unwrap_or_default();
+    Ok(Requirement { label, kind, statement, seal, cover, reconcile, satisfied_by, verified_by })
 }
 
 fn parse_kind(s: &str, line: usize) -> Result<Kind, ParseError> {
@@ -135,6 +171,19 @@ fn parse_kind(s: &str, line: usize) -> Result<Kind, ParseError> {
         "functional" => Ok(Kind::Functional),
         "invariant" => Ok(Kind::Invariant),
         other => Err(err(line, &format!("unknown kind '{}'; expected \"functional\" or \"invariant\"", other))),
+    }
+}
+
+fn parse_seal_mode(s: &str, line: usize) -> Result<SealMode, ParseError> {
+    match s {
+        "off" => Ok(SealMode::Off),
+        "body" => Ok(SealMode::Body),
+        "signature" => Ok(SealMode::Signature),
+        "full" => Ok(SealMode::Full),
+        other => Err(err(line, &format!(
+            "unknown seal '{}'; expected \"off\", \"body\", \"signature\", or \"full\"",
+            other
+        ))),
     }
 }
 
@@ -167,12 +216,12 @@ sig_only = true
         assert_eq!(r0.label, "VOTER-1");
         assert_eq!(r0.kind, Kind::Functional);
         assert_eq!(r0.statement, "Two identical inputs always out-vote the third");
-        assert!(!r0.sig_only);
+        assert_eq!(r0.seal, SealMode::Body);
         assert_eq!(r0.satisfied_by, vec!["crate::voter::vote"]);
         let r1 = &m.requirements[1];
         assert_eq!(r1.label, "VOTER-2");
         assert_eq!(r1.kind, Kind::Invariant);
-        assert!(r1.sig_only);
+        assert_eq!(r1.seal, SealMode::Off);
         assert!(r1.satisfied_by.is_empty());
     }
 
@@ -211,5 +260,40 @@ sig_only = true
     fn rejects_unknown_section() {
         let src = "[meta]\nversion = 1\n";
         assert!(parse(src).unwrap_err().msg.contains("unknown top-level section"));
+    }
+
+    #[test]
+    fn parses_seal_modes() {
+        let src = "[req.A]\nkind=\"functional\"\nstatement=\"a\"\nseal=\"full\"\n\
+                   [req.B]\nkind=\"functional\"\nstatement=\"b\"\nseal=\"signature\"\n\
+                   [req.C]\nkind=\"functional\"\nstatement=\"c\"\n";
+        let m = parse(src).unwrap();
+        assert_eq!(m.requirements[0].seal, SealMode::Full);
+        assert_eq!(m.requirements[1].seal, SealMode::Signature);
+        assert_eq!(m.requirements[2].seal, SealMode::Body); // default
+    }
+
+    #[test]
+    fn sig_only_true_maps_to_off() {
+        let src = "[req.X]\nkind=\"invariant\"\nstatement=\"x\"\nsig_only = true\n";
+        assert_eq!(parse(src).unwrap().requirements[0].seal, SealMode::Off);
+    }
+
+    #[test]
+    fn rejects_unknown_seal_mode() {
+        let src = "[req.X]\nkind=\"functional\"\nstatement=\"x\"\nseal=\"partial\"\n";
+        assert!(parse(src).unwrap_err().msg.contains("unknown seal"));
+    }
+
+    #[test]
+    fn parses_cover_pointcut() {
+        let src = "[req.X]\nkind=\"invariant\"\nstatement=\"s\"\ncover=\"pub fn within crate::api\"\n";
+        assert!(parse(src).unwrap().requirements[0].cover.is_some());
+    }
+
+    #[test]
+    fn rejects_malformed_cover() {
+        let src = "[req.X]\nkind=\"invariant\"\nstatement=\"s\"\ncover=\"pub fn crate::api\"\n";
+        assert!(parse(src).unwrap_err().msg.contains("within"));
     }
 }

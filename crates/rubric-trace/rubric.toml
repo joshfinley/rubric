@@ -7,41 +7,103 @@
 [req.SEAL-HASH]
 kind = "functional"
 statement = "Every seal is an FNV-1a 64 hash of its normalized input"
+reconcile = true
 
 [req.SEAL-FORMAT]
 kind = "functional"
 statement = "A seal renders as a scheme tag joined to sixteen hex digits"
+reconcile = true
 
 [req.SEAL-BODY]
 kind = "functional"
 statement = "Identical token sequences seal identically; any token change changes the seal"
+reconcile = true
 
 [req.SEAL-STMT]
 kind = "functional"
 statement = "A statement seal ignores whitespace but breaks on rewording"
+reconcile = true
+
+[req.SEAL-SIG]
+kind = "functional"
+statement = "A signature seal and a full seal carry the sig and full scheme tags, and a full seal breaks on either a signature or a body change"
+reconcile = true
+
+[req.SEAL-FILE]
+kind = "functional"
+statement = "A file seal is an FNV-1a 64 hash of raw bytes under the file scheme"
+reconcile = true
+
+# --- Pointcuts ---
+
+[req.POINTCUT-PARSE]
+kind = "functional"
+statement = "A cover designator parses into a visibility predicate, an optional kind filter, and a module scope, and rejects malformed input"
+reconcile = true
+
+[req.POINTCUT-MATCH]
+kind = "functional"
+statement = "A pointcut matches an item when its visibility, kind, and module scope all satisfy the designator"
+reconcile = true
 
 # --- The oracle ---
 
 [req.CHECK-COVERAGE]
 kind = "functional"
 statement = "Every functional requirement needs a cited satisfier and every requirement a cited verifier"
+reconcile = true
 
 [req.CHECK-RESOLVE]
 kind = "functional"
 statement = "Every cited path must resolve to a real item in the tree"
+reconcile = true
 
 [req.CHECK-SEAL]
 kind = "functional"
 statement = "A recorded seal that no longer matches its content fails the check"
+reconcile = true
 
 [req.CHECK-LIVE]
 kind = "functional"
 statement = "A cited verifier must be a live, non-ignored test"
+reconcile = true
 
 [req.CHECK-ORPHAN]
 kind = "functional"
 statement = "An annotation citing a label absent from the manifest is reported as an orphan"
+reconcile = true
 
 [req.CHECK-KIND]
 kind = "functional"
 statement = "A satisfies citation on an invariant requirement is a kind violation"
+reconcile = true
+
+[req.CHECK-MISPLACED]
+kind = "functional"
+statement = "A satisfies annotation that resolves to a non-function item is reported as misplaced"
+reconcile = true
+
+[req.CHECK-SEALMODE]
+kind = "functional"
+statement = "A body-sealed citation that resolves to an item with no body is reported as a seal-mode mismatch"
+reconcile = true
+
+[req.CHECK-EXTSEAL]
+kind = "functional"
+statement = "A signature or full seal on a requirement whose every cited item is external evidence is reported as a mismatch"
+reconcile = true
+
+[req.CHECK-COVER]
+kind = "functional"
+statement = "A pointcut-covered item with no recorded seal is reported as uncovered, while a covered item that drifts is a broken seal"
+reconcile = true
+
+[req.CHECK-COVERDROP]
+kind = "functional"
+statement = "An item a cover requirement still seals but whose pointcut no longer matches it, and that nothing else cites, is reported as dropped coverage"
+reconcile = true
+
+[req.CHECK-RECONCILE]
+kind = "functional"
+statement = "A reconcile requirement whose current leg seals do not match its recorded attestation root is reported as unreconciled"
+reconcile = true

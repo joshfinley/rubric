@@ -25,7 +25,7 @@
 
 use std::collections::BTreeMap;
 
-use rubric_trace::check::{Citation, Direction, ItemFacts, Scan};
+use rubric_trace::check::{Citation, Direction, ItemFacts, ItemKind, Scan, Visibility};
 use rubric_trace::lock::Origin;
 use rubric_trace::manifest::Manifest;
 use rubric_trace::normalize;
@@ -79,23 +79,52 @@ pub fn scan_files(files: &[FileInput], manifest: &Manifest) -> Scan {
         }
     }
 
+    // Cover expansion: bind matching scanned items as declared satisfiers.
+    // `items` iterates in sorted path order, so injected citations are
+    // deterministic. Skip items already cited.
+    for r in &manifest.requirements {
+        let Some(pc) = &r.cover else { continue };
+        for it in items.values() {
+            if !pc.matches(it) {
+                continue;
+            }
+            let already = citations.iter().any(|c| {
+                c.req_label == r.label
+                    && c.item_path == it.path
+                    && c.direction == Direction::Satisfies
+            });
+            if already {
+                continue;
+            }
+            citations.push(Citation {
+                req_label: r.label.clone(),
+                item_path: it.path.clone(),
+                direction: Direction::Satisfies,
+                origin: Origin::Declared,
+            });
+        }
+    }
+
     // Every cited path needs an ItemFacts. Discovered items already have
-    // one. For the rest, an `external:` path resolves to file evidence
-    // (existence checked by the caller), and any other unknown path is a
-    // dangling declaration the oracle reports as unresolved.
+    // one. The rest start unresolved. The loader resolves and content-seals
+    // `external:` evidence (it does the file I/O). Any other unknown path
+    // stays a dangling declaration the oracle reports as unresolved.
     for c in &citations {
         if items.contains_key(&c.item_path) {
             continue;
         }
-        let external = c.item_path.starts_with("external:");
         items.insert(
             c.item_path.clone(),
             ItemFacts {
                 path: c.item_path.clone(),
-                resolved: external,
+                resolved: false,
                 is_test: false,
                 is_ignored: false,
+                vis: Visibility::Private,
+                kind: ItemKind::Fn,
                 body: None,
+                signature: None,
+                evidence_seal: None,
             },
         );
     }
@@ -163,6 +192,11 @@ struct Pending {
     verifies: Vec<String>,
     is_test: bool,
     is_ignored: bool,
+    /// Visibility seen ahead of the item (`pub` / `pub(...)`).
+    vis: Visibility,
+    /// Token index where the item's signature begins (first modifier or
+    /// `pub`). The shadow starts here, covering visibility and modifiers.
+    sig_start: Option<usize>,
 }
 
 /// A scope frame. `true` means it pushed a path segment (`mod`/`impl`/
@@ -277,24 +311,67 @@ impl<'a> FileParser<'a> {
             "mod" => self.handle_mod(),
             "impl" => self.handle_impl(),
             "trait" => self.handle_trait(),
-            // Transparent modifiers: keep pending markers for the fn ahead.
-            "pub" | "async" | "unsafe" | "const" | "extern" | "default" | "move"
-            | "static" | "auto" | "dyn" => self.i += 1,
+            "struct" => self.handle_item(ItemKind::Struct),
+            "enum" => self.handle_item(ItemKind::Enum),
+            "union" => self.handle_item(ItemKind::Union),
+            "type" => self.handle_item(ItemKind::TypeAlias),
+            "pub" => self.handle_pub(),
+            // `const fn` is a modifier. A bare `const`/`static` NAME is an item.
+            "const" => match self.next_sig(self.i + 1) {
+                Some(j) if self.slice(j) == "fn" => self.transparent_modifier(),
+                _ => self.handle_item(ItemKind::Const),
+            },
+            "static" => match self.next_sig(self.i + 1) {
+                Some(j) if self.slice(j) == "fn" || self.slice(j) == "move" => {
+                    self.transparent_modifier()
+                }
+                _ => self.handle_item(ItemKind::Static),
+            },
+            // Transparent modifiers: keep pending markers for the item ahead.
+            "async" | "unsafe" | "extern" | "default" | "move" | "auto" | "dyn" => {
+                self.transparent_modifier()
+            }
             other => {
                 if self.try_skip_macro() {
                     return;
                 }
-                // Other item starters end the attribute run.
+                // Other item/statement starters end the attribute run.
                 if matches!(
                     other,
-                    "struct" | "enum" | "union" | "use" | "type" | "let"
-                        | "return" | "match" | "if" | "while" | "for" | "loop"
+                    "use" | "let" | "return" | "match" | "if" | "while" | "for" | "loop"
                 ) {
                     self.pending = Pending::default();
                 }
                 self.i += 1;
             }
         }
+    }
+
+    /// A transparent item modifier (`async`, `const fn`, ...): remember where
+    /// the signature begins, then step over it keeping pending markers.
+    fn transparent_modifier(&mut self) {
+        if self.pending.sig_start.is_none() {
+            self.pending.sig_start = Some(self.i);
+        }
+        self.i += 1;
+    }
+
+    /// Records visibility (`pub`, `pub(crate)`, `pub(super)`, `pub(in path)`)
+    /// and the signature start, then steps over the token.
+    fn handle_pub(&mut self) {
+        if self.pending.sig_start.is_none() {
+            self.pending.sig_start = Some(self.i);
+        }
+        self.i += 1;
+        let mut vis = Visibility::Pub;
+        if let Some(n) = self.next_sig(self.i) {
+            if self.kind(n) == TokenKind::OpenParen {
+                vis = Visibility::PubCrate;
+                let close = self.skip_balanced(n, TokenKind::OpenParen, TokenKind::CloseParen);
+                self.i = close + 1;
+            }
+        }
+        self.pending.vis = vis;
     }
 
     /// `name!( ... )` / `name! { ... }` / `name![ ... ]`, skip whole.
@@ -437,14 +514,61 @@ impl<'a> FileParser<'a> {
             }
         };
         let name = self.slice(name_idx).to_string();
-        self.pending = Pending::default();
+        let kw = self.i;
+        let pending = std::mem::take(&mut self.pending);
+        let path = {
+            let mut full = self.path.clone();
+            full.push(name.clone());
+            full.join("::")
+        };
+        self.emit_markers(&pending, &path);
+        let sig_start = pending.sig_start.unwrap_or(kw);
         match self.next_sig(name_idx + 1) {
             Some(b) if self.kind(b) == TokenKind::OpenBrace => {
+                self.record_decl_item(path, pending.vis, ItemKind::Mod, sig_start, b);
                 self.path.push(name);
                 self.frames.push(true);
                 self.i = b + 1;
             }
-            _ => self.i = name_idx + 1, // `mod foo;`
+            Some(b) => {
+                self.record_decl_item(path, pending.vis, ItemKind::Mod, sig_start, b);
+                self.i = name_idx + 1; // `mod foo;`
+            }
+            None => self.i = name_idx + 1,
+        }
+    }
+
+    /// Record a bodyless or container item (mod/trait) whose shadow is the
+    /// declaration `[sig_start, sig_end)` (excluding any body block).
+    fn record_decl_item(
+        &mut self,
+        path: String,
+        vis: Visibility,
+        kind: ItemKind,
+        sig_start: usize,
+        sig_end: usize,
+    ) {
+        self.items.push(ItemFacts {
+            path,
+            resolved: true,
+            is_test: false,
+            is_ignored: false,
+            vis,
+            kind,
+            body: None,
+            signature: Some(self.normalize_range(sig_start, sig_end)),
+            evidence_seal: None,
+        });
+    }
+
+    /// Push an item's pending annotations as citations at `path`. Markers on
+    /// a non-fn item still emit, so the oracle can report them as misplaced.
+    fn emit_markers(&mut self, pending: &Pending, path: &str) {
+        for l in &pending.satisfies {
+            self.annotations.push((l.clone(), path.to_string(), Direction::Satisfies));
+        }
+        for l in &pending.verifies {
+            self.annotations.push((l.clone(), path.to_string(), Direction::Verifies));
         }
     }
 
@@ -505,7 +629,8 @@ impl<'a> FileParser<'a> {
     }
 
     fn handle_trait(&mut self) {
-        self.pending = Pending::default();
+        let kw = self.i;
+        let pending = std::mem::take(&mut self.pending);
         let name_idx = match self.next_sig(self.i + 1) {
             Some(j) if matches!(self.kind(j), TokenKind::Ident | TokenKind::RawIdent) => j,
             _ => {
@@ -514,6 +639,12 @@ impl<'a> FileParser<'a> {
             }
         };
         let name = self.slice(name_idx).to_string();
+        let path = {
+            let mut full = self.path.clone();
+            full.push(name.clone());
+            full.join("::")
+        };
+        self.emit_markers(&pending, &path);
         // Scan to the body brace (skipping generics / supertrait bounds).
         let mut j = name_idx + 1;
         let mut body = None;
@@ -532,6 +663,8 @@ impl<'a> FileParser<'a> {
             }
             j += 1;
         }
+        let sig_start = pending.sig_start.unwrap_or(kw);
+        self.record_decl_item(path, pending.vis, ItemKind::Trait, sig_start, j);
         match body {
             Some(b) => {
                 self.path.push(name);
@@ -543,6 +676,7 @@ impl<'a> FileParser<'a> {
     }
 
     fn handle_fn(&mut self) {
+        let kw = self.i;
         let name_idx = match self.next_sig(self.i + 1) {
             Some(j) if matches!(self.kind(j), TokenKind::Ident | TokenKind::RawIdent) => j,
             _ => {
@@ -557,28 +691,121 @@ impl<'a> FileParser<'a> {
 
         let pending = std::mem::take(&mut self.pending);
 
-        let (body, after) = match self.find_fn_body(name_idx + 1) {
+        // `sig_end` is the body `{` (exclusive) or the `;` of a bodyless decl.
+        let (body, sig_end, after) = match self.find_fn_body(name_idx + 1) {
             Some(open) => {
                 let close = self.skip_balanced(open, TokenKind::OpenBrace, TokenKind::CloseBrace);
-                (Some(self.normalize_body(open, close)), close + 1)
+                (Some(self.normalize_body(open, close)), open, close + 1)
             }
-            None => (None, self.advance_past_decl(name_idx + 1)),
+            None => {
+                let after = self.advance_past_decl(name_idx + 1);
+                (None, after.saturating_sub(1), after)
+            }
         };
+        let sig_start = pending.sig_start.unwrap_or(kw);
+        let signature = Some(self.normalize_range(sig_start, sig_end));
 
-        for l in &pending.satisfies {
-            self.annotations.push((l.clone(), path.clone(), Direction::Satisfies));
-        }
-        for l in &pending.verifies {
-            self.annotations.push((l.clone(), path.clone(), Direction::Verifies));
-        }
+        self.emit_markers(&pending, &path);
         self.items.push(ItemFacts {
             path,
             resolved: true,
             is_test: pending.is_test,
             is_ignored: pending.is_ignored,
+            vis: pending.vis,
+            kind: ItemKind::Fn,
             body,
+            signature,
+            evidence_seal: None,
         });
         self.i = after;
+    }
+
+    /// A non-fn item with a name: `struct`/`enum`/`union`/`type`/`const`/
+    /// `static`. The shadow runs from the signature start through the body
+    /// `}` (braced types) or the terminating `;`.
+    fn handle_item(&mut self, kind: ItemKind) {
+        let kw = self.i;
+        let mut name_idx = match self.next_sig(self.i + 1) {
+            Some(j) if matches!(self.kind(j), TokenKind::Ident | TokenKind::RawIdent) => j,
+            _ => {
+                // Not a recognizable item (e.g. `union` used as an ident).
+                self.i += 1;
+                return;
+            }
+        };
+        // `static mut NAME`: `mut` is a modifier, the name follows it.
+        if self.slice(name_idx) == "mut" {
+            match self.next_sig(name_idx + 1) {
+                Some(j) if matches!(self.kind(j), TokenKind::Ident | TokenKind::RawIdent) => {
+                    name_idx = j
+                }
+                _ => {
+                    self.i += 1;
+                    return;
+                }
+            }
+        }
+        let name = self.slice(name_idx).to_string();
+        let mut full = self.path.clone();
+        full.push(name);
+        let path = full.join("::");
+
+        let pending = std::mem::take(&mut self.pending);
+        self.emit_markers(&pending, &path);
+        let (end_exclusive, after) = self.find_item_end(name_idx + 1);
+        let sig_start = pending.sig_start.unwrap_or(kw);
+        let signature = Some(self.normalize_range(sig_start, end_exclusive));
+
+        self.items.push(ItemFacts {
+            path,
+            resolved: true,
+            is_test: false,
+            is_ignored: false,
+            vis: pending.vis,
+            kind,
+            body: None,
+            signature,
+            evidence_seal: None,
+        });
+        self.i = after;
+    }
+
+    /// End of a non-fn item: the matched `}` (if a body brace precedes any
+    /// `;` at depth 0) or the `;`. Returns `(shadow_end_exclusive, next_i)`.
+    fn find_item_end(&self, start: usize) -> (usize, usize) {
+        let (mut paren, mut bracket, mut angle) = (0usize, 0usize, 0usize);
+        let mut prev: Option<TokenKind> = None;
+        let mut j = start;
+        while j < self.toks.len() {
+            let k = self.kind(j);
+            match k {
+                TokenKind::OpenParen => paren += 1,
+                TokenKind::CloseParen => paren = paren.saturating_sub(1),
+                TokenKind::OpenBracket => bracket += 1,
+                TokenKind::CloseBracket => bracket = bracket.saturating_sub(1),
+                TokenKind::Lt => angle += 1,
+                TokenKind::Gt => {
+                    if prev != Some(TokenKind::Minus) {
+                        angle = angle.saturating_sub(1);
+                    }
+                }
+                TokenKind::OpenBrace if paren == 0 && bracket == 0 && angle == 0 => {
+                    let close =
+                        self.skip_balanced(j, TokenKind::OpenBrace, TokenKind::CloseBrace);
+                    return (close + 1, close + 1);
+                }
+                // `;` ignores `angle`: a `<` operator in a value never nests it.
+                TokenKind::Semi if paren == 0 && bracket == 0 => {
+                    return (j + 1, j + 1);
+                }
+                _ => {}
+            }
+            if !is_trivia(k) {
+                prev = Some(k);
+            }
+            j += 1;
+        }
+        (self.toks.len(), self.toks.len())
     }
 
     /// First `{` at paren/bracket/angle depth 0, or `None` for a bodyless
@@ -626,7 +853,13 @@ impl<'a> FileParser<'a> {
     /// Significant tokens strictly inside `(open, close)`, joined by the
     /// core's body normalization policy.
     fn normalize_body(&self, open: usize, close: usize) -> String {
-        let toks = (open + 1..close)
+        self.normalize_range(open + 1, close)
+    }
+
+    /// Significant tokens in `[start, end)`, joined by the core's body
+    /// normalization policy.
+    fn normalize_range(&self, start: usize, end: usize) -> String {
+        let toks = (start..end)
             .filter(|&j| !is_trivia(self.kind(j)))
             .map(|j| self.slice(j));
         normalize::body_from_tokens(toks)
@@ -928,5 +1161,131 @@ fn round_trips() { assert!(true); }
         let src = "fn f<T: Fn() -> u32>(x: T) -> u32 { x() }\n";
         let p = scan_one(src);
         assert_eq!(item(&p, "crate::f").body, Some("x ( )".to_string()));
+    }
+
+    #[test]
+    fn captures_pub_visibility() {
+        let p = scan_one("pub fn f() {}\nfn g() {}\n");
+        assert_eq!(item(&p, "crate::f").vis, Visibility::Pub);
+        assert_eq!(item(&p, "crate::g").vis, Visibility::Private);
+        assert_eq!(item(&p, "crate::f").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn captures_pub_crate() {
+        let p = scan_one("pub(crate) fn f() {}\npub(in crate::a) fn h() {}\n");
+        assert_eq!(item(&p, "crate::f").vis, Visibility::PubCrate);
+        assert_eq!(item(&p, "crate::h").vis, Visibility::PubCrate);
+    }
+
+    #[test]
+    fn signature_shadow_excludes_body() {
+        let p = scan_one("pub fn add(a: u8, b: u8) -> u8 { a + b }\n");
+        let it = item(&p, "crate::add");
+        let sig = it.signature.as_deref().unwrap();
+        assert!(sig.starts_with("pub fn add"), "{sig}");
+        assert!(sig.contains("a : u8"), "{sig}");
+        assert!(!sig.contains('{'), "signature must not include the body: {sig}");
+        assert_eq!(it.body.as_deref(), Some("a + b"));
+    }
+
+    #[test]
+    fn fn_to_pub_fn_changes_signature_not_body() {
+        let priv_fn = item(&scan_one("fn f() -> u8 { 1 }\n"), "crate::f").clone();
+        let pub_fn = item(&scan_one("pub fn f() -> u8 { 1 }\n"), "crate::f").clone();
+        assert_ne!(priv_fn.signature, pub_fn.signature);
+        assert_eq!(priv_fn.body, pub_fn.body);
+    }
+
+    #[test]
+    fn enumerates_pub_struct_enum_const() {
+        let src = "\
+pub struct S { x: u8 }
+pub enum E { A, B }
+pub const C: u8 = 3;
+pub static T: u8 = 4;
+pub type Alias = u8;
+";
+        let p = scan_one(src);
+        assert_eq!(item(&p, "crate::S").kind, ItemKind::Struct);
+        assert_eq!(item(&p, "crate::E").kind, ItemKind::Enum);
+        assert_eq!(item(&p, "crate::C").kind, ItemKind::Const);
+        assert_eq!(item(&p, "crate::T").kind, ItemKind::Static);
+        assert_eq!(item(&p, "crate::Alias").kind, ItemKind::TypeAlias);
+        assert_eq!(item(&p, "crate::S").vis, Visibility::Pub);
+        // The struct body is part of the signature shadow (adding a field trips).
+        assert!(item(&p, "crate::S").signature.as_deref().unwrap().contains('x'));
+    }
+
+    #[test]
+    fn unit_struct_terminates_on_semi() {
+        let p = scan_one("pub struct Marker;\npub fn after() {}\n");
+        assert_eq!(item(&p, "crate::Marker").kind, ItemKind::Struct);
+        // The fn after the unit struct is still found (terminator handled).
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn tuple_struct_with_generics_terminates() {
+        let p = scan_one("pub struct Wrap(Vec<u8>);\nfn after() {}\n");
+        assert_eq!(item(&p, "crate::Wrap").kind, ItemKind::Struct);
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn const_fn_is_not_a_const_item() {
+        let p = scan_one("pub const fn f() -> u8 { 1 }\n");
+        assert_eq!(item(&p, "crate::f").kind, ItemKind::Fn);
+        assert_eq!(item(&p, "crate::f").vis, Visibility::Pub);
+    }
+
+    #[test]
+    fn static_mut_is_named_after_mut() {
+        let p = scan_one("pub static mut COUNTER: u8 = 0;\npub fn after() {}\n");
+        assert_eq!(item(&p, "crate::COUNTER").kind, ItemKind::Static);
+        assert_eq!(item(&p, "crate::COUNTER").vis, Visibility::Pub);
+        assert!(!p.items.iter().any(|i| i.path == "crate::mut"));
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn shift_in_const_value_does_not_swallow_following_items() {
+        let p = scan_one("pub const MASK: u32 = 1 << 4;\npub fn after() {}\n");
+        assert_eq!(item(&p, "crate::MASK").kind, ItemKind::Const);
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn comparison_in_static_value_does_not_swallow_following_items() {
+        let p = scan_one("static OK: bool = 3 < 8;\nfn after() {}\n");
+        assert_eq!(item(&p, "crate::OK").kind, ItemKind::Static);
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn array_len_shift_in_tuple_struct_terminates() {
+        let p = scan_one("pub struct A([u8; 1 << 8]);\npub fn after() {}\n");
+        assert_eq!(item(&p, "crate::A").kind, ItemKind::Struct);
+        assert_eq!(item(&p, "crate::after").kind, ItemKind::Fn);
+    }
+
+    #[test]
+    fn cover_injects_satisfier_citations() {
+        let files = vec![FileInput {
+            module_path: vec!["crate".to_string()],
+            source: "pub fn connect() {}\nfn helper() {}\n".to_string(),
+        }];
+        let m = rubric_trace::manifest::parse(
+            "[req.API]\nkind=\"invariant\"\nstatement=\"s\"\ncover=\"pub fn within crate\"\n",
+        )
+        .unwrap();
+        let scan = scan_files(&files, &m);
+        let cited = |path: &str| {
+            scan.citations.iter().any(|c| {
+                c.req_label == "API" && c.item_path == path && c.direction == Direction::Satisfies
+            })
+        };
+        assert!(cited("crate::connect")); // pub fn matched the pointcut
+        assert!(!cited("crate::helper")); // private fn did not
     }
 }

@@ -1,28 +1,21 @@
 //! `cargo rubric log`: the seal-event timeline from the git history of
 //! `rubric.lock`.
 //!
-//! Rubric keeps no history file of its own. This walks the commits that
-//! touched `rubric.lock`, parses each version, and reports every
-//! `(requirement, item)` seal that was introduced, re-sealed, or removed,
-//! newest first. The actual source diff is one `git show` away.
+//! Walks the commits that touched `rubric.lock`, parses each version, and
+//! reports every `(requirement, item)` seal that was introduced, re-sealed,
+//! or removed, newest first. The source diff is one `git show` away.
 
-use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use rubric_trace::check::STATEMENT_MARKER;
-use rubric_trace::lock::{self, Seal};
+use rubric_trace::lock::Seal;
 
+use crate::git_history::{lock_history, SealMap};
 use crate::members;
 
 pub fn run() -> ExitCode {
     members::drive(log_one)
-}
-
-struct Commit {
-    sha: String,
-    author: String,
-    date: String,
 }
 
 fn log_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
@@ -33,43 +26,12 @@ fn log_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
 }
 
 fn try_run(root: &Path) -> Result<(), String> {
-    // Repo-root-relative path to the lockfile (git show needs it).
-    let prefix = git(root, &["rev-parse", "--show-prefix"])
-        .map_err(|_| "not a git repository (or no commits yet)".to_string())?;
-    let rel = format!("{}rubric.lock", prefix.trim());
-
-    let raw = git(
-        root,
-        &["log", "--format=%H%x1f%an%x1f%ad", "--date=short", "--", "rubric.lock"],
-    )?;
-    let commits: Vec<Commit> = raw
-        .lines()
-        .filter_map(|line| {
-            let mut f = line.split('\u{1f}');
-            Some(Commit {
-                sha: f.next()?.to_string(),
-                author: f.next()?.to_string(),
-                date: f.next()?.to_string(),
-            })
-        })
-        .collect();
+    let (commits, versions, _) = lock_history(root, None)?;
 
     if commits.is_empty() {
         println!("no committed history for rubric.lock");
         return Ok(());
     }
-
-    // Seal map per commit (empty if that version doesn't parse).
-    let versions: Vec<SealMap> = commits
-        .iter()
-        .map(|c| {
-            let spec = format!("{}:{}", c.sha, rel);
-            match git(root, &["show", &spec]) {
-                Ok(src) => seal_map(&src),
-                Err(_) => SealMap::new(),
-            }
-        })
-        .collect();
 
     let mut printed_any = false;
     for (i, commit) in commits.iter().enumerate() {
@@ -93,19 +55,6 @@ fn try_run(root: &Path) -> Result<(), String> {
         println!("no seal changes recorded in rubric.lock history");
     }
     Ok(())
-}
-
-type SealMap = BTreeMap<(String, String), Seal>;
-
-fn seal_map(src: &str) -> SealMap {
-    match lock::parse(src) {
-        Ok(l) => l
-            .entries
-            .into_iter()
-            .map(|e| ((e.key.req_label, e.key.item_path), e.seal))
-            .collect(),
-        Err(_) => SealMap::new(),
-    }
 }
 
 enum Event {
@@ -166,17 +115,4 @@ fn item_label(item: &str) -> &str {
     } else {
         item
     }
-}
-
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .map_err(|e| format!("running git: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }

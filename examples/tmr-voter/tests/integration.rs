@@ -1,10 +1,10 @@
 //! Integration verifier: exercises the voter through its public surface.
 
-use tmr_voter::majority3;
+use tmr_voter::vote;
 
-// verifies: TMR-1
+// verifies: TMR-VOTE
 #[test]
-fn unanimous_channels() {
-    assert!(majority3(true, true, true));
-    assert!(!majority3(false, false, false));
+fn unanimous_inputs() {
+    assert!(vote(true, true, true));
+    assert!(!vote(false, false, false));
 }
