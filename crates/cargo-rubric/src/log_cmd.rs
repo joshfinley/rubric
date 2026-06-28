@@ -26,7 +26,7 @@ fn log_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
 }
 
 fn try_run(root: &Path) -> Result<(), String> {
-    let (commits, versions) = lock_history(root)?;
+    let (commits, versions, _) = lock_history(root, None)?;
 
     if commits.is_empty() {
         println!("no committed history for rubric.lock");

@@ -18,18 +18,27 @@ pub struct Commit {
 /// Seal state of one `rubric.lock` version, keyed by `(req_label, item_path)`.
 pub type SealMap = BTreeMap<(String, String), Seal>;
 
-/// Commits that touched `rubric.lock` (newest first) and the parsed seal
-/// state at each. A version that does not parse reads as empty.
-pub fn lock_history(root: &Path) -> Result<(Vec<Commit>, Vec<SealMap>), String> {
+/// Commits that touched `rubric.lock` (newest first), the parsed seal state
+/// at each, and the boundary state just before the listed range. With
+/// `base` set, only commits in `base..HEAD` are walked and the boundary is
+/// the lock at `base`; otherwise the whole history is walked and the
+/// boundary is empty. A version that does not parse reads as empty.
+pub fn lock_history(
+    root: &Path,
+    base: Option<&str>,
+) -> Result<(Vec<Commit>, Vec<SealMap>, SealMap), String> {
     // Repo-root-relative path to the lockfile (`git show` needs it).
     let prefix = git(root, &["rev-parse", "--show-prefix"])
         .map_err(|_| "not a git repository (or no commits yet)".to_string())?;
     let rel = format!("{}rubric.lock", prefix.trim());
 
-    let raw = git(
-        root,
-        &["log", "--format=%H%x1f%an%x1f%ad", "--date=short", "--", "rubric.lock"],
-    )?;
+    let range = base.map(|b| format!("{b}..HEAD"));
+    let mut args = vec!["log", "--format=%H%x1f%an%x1f%ad", "--date=short"];
+    if let Some(r) = &range {
+        args.push(r.as_str());
+    }
+    args.extend(["--", "rubric.lock"]);
+    let raw = git(root, &args)?;
     let commits: Vec<Commit> = raw.lines().filter_map(parse_line).collect();
 
     let versions = commits
@@ -39,7 +48,14 @@ pub fn lock_history(root: &Path) -> Result<(Vec<Commit>, Vec<SealMap>), String> 
             Err(_) => SealMap::new(),
         })
         .collect();
-    Ok((commits, versions))
+
+    // State just before the range: the lock at `base`. Empty for full
+    // history, or when the lockfile predates `base`.
+    let boundary = match base {
+        Some(b) => git(root, &["show", &format!("{b}:{rel}")]).map(|s| seal_map(&s)).unwrap_or_default(),
+        None => SealMap::new(),
+    };
+    Ok((commits, versions, boundary))
 }
 
 fn parse_line(line: &str) -> Option<Commit> {

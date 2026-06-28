@@ -29,6 +29,7 @@ Commands:
   trace   Render the traceability matrix as markdown
   log     Seal history from the git history of rubric.lock
   audit   Flag commits that re-sealed a reconcile chain without attesting
+          (audit [<since>] scopes the walk to <since>..HEAD)
 ";
 
 fn main() -> ExitCode {
@@ -46,7 +47,7 @@ fn main() -> ExitCode {
         Some("attest") => attest_cmd::run(),
         Some("trace") => trace_cmd::run(),
         Some("log") => log_cmd::run(),
-        Some("audit") => audit_cmd::run(),
+        Some("audit") => audit_cmd::run(&rest),
         Some("init") => init_cmd::run(&rest),
         _ => {
             eprint!("{USAGE}");

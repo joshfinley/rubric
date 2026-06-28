@@ -3,7 +3,9 @@
 //! Walks the git history of `rubric.lock` and reports any commit where a
 //! `reconcile` requirement's leg seal moved without its `<attest>` root
 //! moving in the same commit. That is a blind accept. The chain was
-//! re-sealed and shipped without a review checkpoint.
+//! re-sealed and shipped without a review checkpoint. A `<since>` ref
+//! scopes the walk to `<since>..HEAD`, judging a branch on its own commits;
+//! the no-arg form is the full-history forensic report.
 //!
 //! The reconcile policy is read from the current manifest. The guarantee
 //! depends on git history integrity. A force-push rewrites the branch and
@@ -20,11 +22,15 @@ use crate::git_history::{lock_history, SealMap};
 use crate::members;
 use crate::project;
 
-pub fn run() -> ExitCode {
-    members::drive(audit_one)
+/// `cargo rubric audit [<since>]`: with a `<since>` ref, only commits in
+/// `<since>..HEAD` are audited (a branch judged on its own commits);
+/// without one, the whole `rubric.lock` history is walked.
+pub fn run(args: &[String]) -> ExitCode {
+    let base = args.first().cloned();
+    members::drive(move |root, label| audit_one(root, label, base.as_deref()))
 }
 
-fn audit_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
+fn audit_one(root: &Path, label: Option<&str>, base: Option<&str>) -> Result<bool, String> {
     if let Some(l) = label {
         println!("== {l} ==");
     }
@@ -40,17 +46,19 @@ fn audit_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
         return Ok(true);
     }
 
-    let (commits, versions) = lock_history(root)?;
+    let (commits, versions, boundary) = lock_history(root, base)?;
     if commits.is_empty() {
-        println!("no committed history for rubric.lock");
+        match base {
+            Some(b) => println!("no rubric.lock changes since {b}"),
+            None => println!("no committed history for rubric.lock"),
+        }
         return Ok(true);
     }
 
-    let empty = SealMap::new();
     let mut clean = true;
     for (i, commit) in commits.iter().enumerate() {
         let new = &versions[i];
-        let old = versions.get(i + 1).unwrap_or(&empty);
+        let old = versions.get(i + 1).unwrap_or(&boundary);
         for label in &reconcile {
             let moved = legs_moved(label, old, new);
             if !moved.is_empty() && !attest_moved(label, old, new) {
