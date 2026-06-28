@@ -25,6 +25,17 @@ CHECK-SEAL	<statement>	declared	stmt:7900a3418172ee32
 CHECK-SEAL	crate::check::check	annotation	body:21966db05cd11080
 CHECK-SEAL	crate::check::tests::broken_body_seal	annotation	body:064b46a0e65a7ff0
 CHECK-SEAL	crate::check::tests::broken_statement_seal	annotation	body:be9bcb311a0c86a6
+POINTCUT-MATCH	<statement>	declared	stmt:86bbcdd41b48f89b
+POINTCUT-MATCH	crate::pointcut::Pointcut::matches	annotation	body:76821b4cff415d7b
+POINTCUT-MATCH	crate::pointcut::tests::matches_pub_fn_in_scope_only	annotation	body:80221d52719e94e9
+POINTCUT-MATCH	crate::pointcut::tests::pub_crate_predicate_includes_pub	annotation	body:b7a9111dd4f3b83f
+POINTCUT-MATCH	crate::pointcut::tests::scope_matches_exact_path	annotation	body:5c1f70098ae32008
+POINTCUT-PARSE	<statement>	declared	stmt:aea00cf54499b62a
+POINTCUT-PARSE	crate::pointcut::parse	annotation	body:8dfa35290f952044
+POINTCUT-PARSE	crate::pointcut::tests::item_keyword_is_any_kind	annotation	body:d715f9e5561ef82f
+POINTCUT-PARSE	crate::pointcut::tests::parses_vis_kind_scope	annotation	body:c80cf17b77848099
+POINTCUT-PARSE	crate::pointcut::tests::parses_without_kind_and_strips_wildcard	annotation	body:826ebc0e68094a65
+POINTCUT-PARSE	crate::pointcut::tests::rejects_garbage	annotation	body:d11315400c657af0
 SEAL-BODY	<statement>	declared	stmt:42ff0add37da5af9
 SEAL-BODY	crate::normalize::body_from_tokens	annotation	body:a9c8c326a30e70a6
 SEAL-BODY	crate::normalize::tests::body_is_reformatting_invariant	annotation	body:de96cfea645ecfb9

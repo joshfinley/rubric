@@ -80,25 +80,25 @@ pub fn scan_files(files: &[FileInput], manifest: &Manifest) -> Scan {
     }
 
     // Every cited path needs an ItemFacts. Discovered items already have
-    // one. For the rest, an `external:` path resolves to file evidence
-    // (existence checked by the caller), and any other unknown path is a
-    // dangling declaration the oracle reports as unresolved.
+    // one. The rest start unresolved. The loader resolves and content-seals
+    // `external:` evidence (it does the file I/O). Any other unknown path
+    // stays a dangling declaration the oracle reports as unresolved.
     for c in &citations {
         if items.contains_key(&c.item_path) {
             continue;
         }
-        let external = c.item_path.starts_with("external:");
         items.insert(
             c.item_path.clone(),
             ItemFacts {
                 path: c.item_path.clone(),
-                resolved: external,
+                resolved: false,
                 is_test: false,
                 is_ignored: false,
                 vis: Visibility::Private,
                 kind: ItemKind::Fn,
                 body: None,
                 signature: None,
+                evidence_seal: None,
             },
         );
     }
@@ -530,6 +530,7 @@ impl<'a> FileParser<'a> {
             kind,
             body: None,
             signature: Some(self.normalize_range(sig_start, sig_end)),
+            evidence_seal: None,
         });
     }
 
@@ -680,6 +681,7 @@ impl<'a> FileParser<'a> {
             kind: ItemKind::Fn,
             body,
             signature,
+            evidence_seal: None,
         });
         self.i = after;
     }
@@ -716,6 +718,7 @@ impl<'a> FileParser<'a> {
             kind,
             body: None,
             signature,
+            evidence_seal: None,
         });
         self.i = after;
     }

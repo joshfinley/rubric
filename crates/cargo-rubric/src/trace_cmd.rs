@@ -158,6 +158,7 @@ mod tests {
             kind: ItemKind::Fn,
             body: Some(body.into()),
             signature: None,
+            evidence_seal: None,
         }
     }
 

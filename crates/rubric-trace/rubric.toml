@@ -28,6 +28,16 @@ statement = "A signature seal and a full seal carry the sig and full scheme tags
 kind = "functional"
 statement = "A file seal is an FNV-1a 64 hash of raw bytes under the file scheme"
 
+# --- Pointcuts ---
+
+[req.POINTCUT-PARSE]
+kind = "functional"
+statement = "A cover designator parses into a visibility predicate, an optional kind filter, and a module scope, and rejects malformed input"
+
+[req.POINTCUT-MATCH]
+kind = "functional"
+statement = "A pointcut matches an item when its visibility, kind, and module scope all satisfy the designator"
+
 # --- The oracle ---
 
 [req.CHECK-COVERAGE]

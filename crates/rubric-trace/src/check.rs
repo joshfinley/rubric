@@ -90,6 +90,10 @@ pub struct ItemFacts {
     /// Normalized signature seal input (visibility through the body brace,
     /// excluding the block). `None` for items without a hashable signature.
     pub signature: Option<String>,
+    /// Precomputed `file:` seal of an `external:` evidence file's bytes,
+    /// filled by the loader (which does the I/O). `None` for source items
+    /// and for evidence that could not be read.
+    pub evidence_seal: Option<String>,
 }
 
 /// Everything the scanner discovered, handed to the pure oracle.
@@ -252,6 +256,14 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
 /// value into the lock. `check` compares the recorded value against it.
 /// Both sides agree by construction.
 pub fn current_seal(req: &Requirement, item: &ItemFacts) -> Option<String> {
+    if req.seal == SealMode::Off {
+        return None;
+    }
+    // External evidence has no body or signature to hash. It is sealed by
+    // its file bytes alone.
+    if is_external(&item.path) {
+        return item.evidence_seal.clone();
+    }
     match req.seal {
         SealMode::Off => None,
         SealMode::Body => item.body.as_deref().map(hash::body_seal),
@@ -304,6 +316,7 @@ mod tests {
             kind: ItemKind::Fn,
             body: body.map(|s| s.into()),
             signature: None,
+            evidence_seal: None,
         }
     }
 
