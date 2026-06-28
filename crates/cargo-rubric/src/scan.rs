@@ -79,6 +79,32 @@ pub fn scan_files(files: &[FileInput], manifest: &Manifest) -> Scan {
         }
     }
 
+    // Cover expansion: bind matching scanned items as declared satisfiers.
+    // `items` iterates in sorted path order, so injected citations are
+    // deterministic. Skip items already cited.
+    for r in &manifest.requirements {
+        let Some(pc) = &r.cover else { continue };
+        for it in items.values() {
+            if !pc.matches(it) {
+                continue;
+            }
+            let already = citations.iter().any(|c| {
+                c.req_label == r.label
+                    && c.item_path == it.path
+                    && c.direction == Direction::Satisfies
+            });
+            if already {
+                continue;
+            }
+            citations.push(Citation {
+                req_label: r.label.clone(),
+                item_path: it.path.clone(),
+                direction: Direction::Satisfies,
+                origin: Origin::Declared,
+            });
+        }
+    }
+
     // Every cited path needs an ItemFacts. Discovered items already have
     // one. The rest start unresolved. The loader resolves and content-seals
     // `external:` evidence (it does the file I/O). Any other unknown path
@@ -1189,5 +1215,25 @@ pub type Alias = u8;
         let p = scan_one("pub const fn f() -> u8 { 1 }\n");
         assert_eq!(item(&p, "crate::f").kind, ItemKind::Fn);
         assert_eq!(item(&p, "crate::f").vis, Visibility::Pub);
+    }
+
+    #[test]
+    fn cover_injects_satisfier_citations() {
+        let files = vec![FileInput {
+            module_path: vec!["crate".to_string()],
+            source: "pub fn connect() {}\nfn helper() {}\n".to_string(),
+        }];
+        let m = rubric_trace::manifest::parse(
+            "[req.API]\nkind=\"invariant\"\nstatement=\"s\"\ncover=\"pub fn within crate\"\n",
+        )
+        .unwrap();
+        let scan = scan_files(&files, &m);
+        let cited = |path: &str| {
+            scan.citations.iter().any(|c| {
+                c.req_label == "API" && c.item_path == path && c.direction == Direction::Satisfies
+            })
+        };
+        assert!(cited("crate::connect")); // pub fn matched the pointcut
+        assert!(!cited("crate::helper")); // private fn did not
     }
 }

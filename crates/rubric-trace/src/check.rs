@@ -121,6 +121,8 @@ pub enum Finding {
     OrphanAnnotation { label: String, item_path: String },
     /// `satisfies` on an `invariant` requirement.
     KindViolation { req_label: String, item_path: String },
+    /// A pointcut-covered item has no seal yet (a new `pub` that has not been `accept`ed).
+    Uncovered { req_label: String, item_path: String },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -135,7 +137,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -211,8 +213,12 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
         }
         let item = item.unwrap();
 
-        // Check 7: kind violation (satisfies on an invariant).
-        if c.direction == Direction::Satisfies && req.kind == Kind::Invariant {
+        // Whether this citation comes from the requirement's cover pointcut.
+        let covered = req.cover.as_ref().is_some_and(|pc| pc.matches(item));
+
+        // Check 7: kind violation (satisfies on an invariant). Cover-pointcut
+        // matches are exempt: a pointcut binds items as satisfiers regardless of kind.
+        if c.direction == Direction::Satisfies && req.kind == Kind::Invariant && !covered {
             findings.push(Finding::KindViolation {
                 req_label: c.req_label.clone(),
                 item_path: c.item_path.clone(),
@@ -231,11 +237,16 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
             });
         }
 
-        // Check 4b: content seal. The requirement's seal mode picks what to
-        // hash (body, signature, both, or nothing). Existence-only when the
-        // mode is `off` or the item has no hashable content.
-        if let Some(current) = current_seal(req, item) {
-            let recorded = rendered_seal(&seals, &c.req_label, &c.item_path);
+        // Checks 4b + census. A covered item with no seal entry yet is an
+        // unacknowledged join point (a new `pub`). Otherwise the seal mode
+        // picks what to hash and a mismatch is drift.
+        let recorded = rendered_seal(&seals, &c.req_label, &c.item_path);
+        if covered && recorded == ABSENT {
+            findings.push(Finding::Uncovered {
+                req_label: c.req_label.clone(),
+                item_path: c.item_path.clone(),
+            });
+        } else if let Some(current) = current_seal(req, item) {
             if recorded != current {
                 findings.push(Finding::SealBroken {
                     req_label: c.req_label.clone(),
@@ -496,6 +507,87 @@ mod tests {
             req_label: "INV-1".into(),
             item_path: "crate::f".into(),
         }));
+    }
+
+    /// A `pub fn` item matching a cover pointcut, ready to mutate per test.
+    fn covered_item(path: &str, body: &str) -> ItemFacts {
+        let mut i = item(path, true, false, false, Some(body));
+        i.vis = Visibility::Pub;
+        i.kind = ItemKind::Fn;
+        i.signature = Some(format!("pub fn {} ( )", path.rsplit("::").next().unwrap()));
+        i
+    }
+
+    // verifies: CHECK-COVER
+    #[test]
+    fn uncovered_fires_for_new_pub() {
+        let m = manifest::parse(
+            "[req.NOPUB]\nkind = \"invariant\"\nstatement = \"surface reviewed\"\n\
+             seal = \"full\"\ncover = \"pub fn within crate::api\"\n\
+             verified_by = [\"crate::tests::surface\"]\n",
+        )
+        .unwrap();
+        // Statement sealed, but the covered item has no entry yet.
+        let lock = Lock {
+            entries: vec![hash_entry(
+                "NOPUB",
+                STATEMENT_MARKER,
+                Origin::Declared,
+                parse_seal(&hash::statement_seal("surface reviewed")),
+            )],
+        };
+        let scan = Scan {
+            citations: vec![
+                // The scanner's cover expansion injects this satisfier.
+                cite("NOPUB", "crate::api::connect", Direction::Satisfies, Origin::Declared),
+                cite("NOPUB", "crate::tests::surface", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                covered_item("crate::api::connect", "a + b"),
+                item("crate::tests::surface", true, true, false, Some("ok")),
+            ],
+        };
+        let r = check(&m, &lock, &scan);
+        assert!(r.findings.contains(&Finding::Uncovered {
+            req_label: "NOPUB".into(),
+            item_path: "crate::api::connect".into(),
+        }));
+        // A cover match on an invariant is not a kind violation.
+        assert!(!r.findings.iter().any(|f| matches!(f, Finding::KindViolation { .. })));
+    }
+
+    // verifies: CHECK-COVER
+    #[test]
+    fn covered_drift_is_sealbroken_not_uncovered() {
+        let m = manifest::parse(
+            "[req.NOPUB]\nkind = \"invariant\"\nstatement = \"s\"\n\
+             seal = \"full\"\ncover = \"pub fn within crate::api\"\n\
+             verified_by = [\"crate::tests::surface\"]\n",
+        )
+        .unwrap();
+        let sig = "pub fn connect ( )";
+        let recorded = hash::full_seal(sig, "old body");
+        let lock = Lock {
+            entries: vec![
+                hash_entry("NOPUB", STATEMENT_MARKER, Origin::Declared,
+                    parse_seal(&hash::statement_seal("s"))),
+                hash_entry("NOPUB", "crate::api::connect", Origin::Declared, parse_seal(&recorded)),
+            ],
+        };
+        let scan = Scan {
+            citations: vec![
+                cite("NOPUB", "crate::api::connect", Direction::Satisfies, Origin::Declared),
+                cite("NOPUB", "crate::tests::surface", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                covered_item("crate::api::connect", "new body"), // body drifted
+                item("crate::tests::surface", true, true, false, Some("ok")),
+            ],
+        };
+        let r = check(&m, &lock, &scan);
+        assert!(r.findings.iter().any(|f| matches!(f,
+            Finding::SealBroken { item_path, .. } if item_path == "crate::api::connect")));
+        assert!(!r.findings.iter().any(|f| matches!(f, Finding::Uncovered { .. })));
     }
 
     #[test]
