@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use crate::hash;
 use crate::lock::{Lock, Origin, Seal};
-use crate::manifest::{Kind, Manifest, Requirement};
+use crate::manifest::{Kind, Manifest, Requirement, SealMode};
 
 /// Reserved lock item-path for a requirement's statement seal.
 pub const STATEMENT_MARKER: &str = "<statement>";
@@ -155,9 +155,9 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
         }
     }
 
-    // Check 4a: statement seals. Every non-`sig_only` requirement has one.
+    // Check 4a: statement seals. Requirements with `seal = off` are skipped.
     for (label, req) in &reqs {
-        if req.sig_only {
+        if req.seal == SealMode::Off {
             continue;
         }
         let current = hash::statement_seal(&req.statement);
@@ -227,25 +227,42 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
             });
         }
 
-        // Check 4b: body seal. Existence-only for `sig_only` requirements
-        // and items without a hashable body (e.g. `external:` evidence).
-        if !req.sig_only {
-            if let Some(body) = &item.body {
-                let current = hash::body_seal(body);
-                let recorded = rendered_seal(&seals, &c.req_label, &c.item_path);
-                if recorded != current {
-                    findings.push(Finding::SealBroken {
-                        req_label: c.req_label.clone(),
-                        item_path: c.item_path.clone(),
-                        recorded,
-                        current,
-                    });
-                }
+        // Check 4b: content seal. The requirement's seal mode picks what to
+        // hash (body, signature, both, or nothing). Existence-only when the
+        // mode is `off` or the item has no hashable content.
+        if let Some(current) = current_seal(req, item) {
+            let recorded = rendered_seal(&seals, &c.req_label, &c.item_path);
+            if recorded != current {
+                findings.push(Finding::SealBroken {
+                    req_label: c.req_label.clone(),
+                    item_path: c.item_path.clone(),
+                    recorded,
+                    current,
+                });
             }
         }
     }
 
     Report { findings }
+}
+
+/// The seal a cited item should currently render to, given its
+/// requirement's seal mode. `None` means existence-only (no content hash):
+/// `seal = off`, or an item with no hashable content. `accept` writes this
+/// value into the lock. `check` compares the recorded value against it.
+/// Both sides agree by construction.
+pub fn current_seal(req: &Requirement, item: &ItemFacts) -> Option<String> {
+    match req.seal {
+        SealMode::Off => None,
+        SealMode::Body => item.body.as_deref().map(hash::body_seal),
+        SealMode::Signature => item.signature.as_deref().map(hash::signature_seal),
+        SealMode::Full => match (item.signature.as_deref(), item.body.as_deref()) {
+            (Some(sig), Some(body)) => Some(hash::full_seal(sig, body)),
+            (Some(sig), None) => Some(hash::signature_seal(sig)),
+            (None, Some(body)) => Some(hash::body_seal(body)),
+            (None, None) => None,
+        },
+    }
 }
 
 fn has_citation(scan: &Scan, label: &str, dir: Direction) -> bool {

@@ -8,10 +8,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rubric_trace::check::{ItemFacts, STATEMENT_MARKER};
+use rubric_trace::check::{self, ItemFacts, STATEMENT_MARKER};
 use rubric_trace::hash;
 use rubric_trace::lock::{self, Entry, Key, Lock, Origin, Seal};
-use rubric_trace::manifest::Manifest;
+use rubric_trace::manifest::{Manifest, Requirement, SealMode};
 
 use crate::members;
 use crate::project;
@@ -34,23 +34,24 @@ fn accept_one(root: &Path, label: Option<&str>) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Re-seal: a statement entry per requirement, plus a body entry per
-/// cited item. `sig_only` requirements get `off` seals (existence only).
+/// Re-seal: a statement entry per requirement, plus a content entry per
+/// cited item. The requirement's seal mode picks what each entry hashes
+/// (body, signature, both, or nothing). `seal = off` gets `off` seals.
 fn build_lock(
     manifest: &Manifest,
     items: &[ItemFacts],
     citations: &[rubric_trace::check::Citation],
 ) -> Lock {
-    let sig_only: BTreeMap<&str, bool> =
-        manifest.requirements.iter().map(|r| (r.label.as_str(), r.sig_only)).collect();
-    let body_of: BTreeMap<&str, Option<&str>> =
-        items.iter().map(|i| (i.path.as_str(), i.body.as_deref())).collect();
+    let reqs: BTreeMap<&str, &Requirement> =
+        manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
+    let items_by: BTreeMap<&str, &ItemFacts> =
+        items.iter().map(|i| (i.path.as_str(), i)).collect();
 
     // Dedup by key. A Hash seal wins over Off, Annotation origin over Declared.
     let mut entries: BTreeMap<Key, Entry> = BTreeMap::new();
 
     for r in &manifest.requirements {
-        let seal = if r.sig_only {
+        let seal = if r.seal == SealMode::Off {
             Seal::Off
         } else {
             parse_seal(&hash::statement_seal(&r.statement))
@@ -62,14 +63,13 @@ fn build_lock(
     }
 
     for c in citations {
-        let off = sig_only.get(c.req_label.as_str()).copied().unwrap_or(false);
-        let seal = if off {
-            Seal::Off
-        } else {
-            match body_of.get(c.item_path.as_str()).copied().flatten() {
-                Some(body) => parse_seal(&hash::body_seal(body)),
-                None => Seal::Off, // external evidence or bodyless item
-            }
+        let seal = match (reqs.get(c.req_label.as_str()), items_by.get(c.item_path.as_str())) {
+            (Some(r), Some(item)) => match check::current_seal(r, item) {
+                Some(s) => parse_seal(&s),
+                None => Seal::Off, // existence-only mode or bodyless/external item
+            },
+            // Unknown requirement or unresolved item: existence-only.
+            _ => Seal::Off,
         };
         insert(&mut entries, Key {
             req_label: c.req_label.clone(),

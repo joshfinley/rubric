@@ -20,6 +20,14 @@ statement = "Identical token sequences seal identically; any token change change
 kind = "functional"
 statement = "A statement seal ignores whitespace but breaks on rewording"
 
+[req.SEAL-SIG]
+kind = "functional"
+statement = "A signature seal and a full seal carry the sig and full scheme tags, and a full seal breaks on either a signature or a body change"
+
+[req.SEAL-FILE]
+kind = "functional"
+statement = "A file seal is an FNV-1a 64 hash of raw bytes under the file scheme"
+
 # --- The oracle ---
 
 [req.CHECK-COVERAGE]
