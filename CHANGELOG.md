@@ -3,6 +3,21 @@
 This project follows [Semantic Versioning](https://semver.org/). Pre-1.0, a
 bump of the minor version may carry breaking changes.
 
+## 0.3.1
+
+Fixes a CLI parsing bug where `--help` was ignored and the subcommand ran
+anyway.
+
+### Fixed
+
+- `cargo rubric <command> --help` (and `-h`) now prints help and exits without
+  running the command. The flag used to be dropped and the command executed, so
+  `accept --help` re-sealed the chain and `attest --help` recorded an
+  attestation root instead of printing help. Each subcommand now has its own
+  help text, and `cargo rubric --help` / `help` prints the command list. Args
+  are parsed by hand here, with no library to supply `--help`, so the guard is
+  explicit and covered by a test.
+
 ## 0.3.0
 
 Makes `cover` pointcuts model _effective_ visibility — reachability from the
@@ -126,3 +141,7 @@ regenerate `rubric.lock` with the new schemes. For any requirement you set to
 
 The attribution chain: `(requirement, satisfier, verifier)` with `stmt:`/`body:`
 seals, the `check`/`accept`/`trace`/`log` commands, and three annotation forms.
+
+---
+
+_Co-authored with Claude (Opus 4.8)._
