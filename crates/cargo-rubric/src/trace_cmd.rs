@@ -137,6 +137,9 @@ fn status_reason(f: &Finding) -> Reason<'_> {
             Reason::Req(req_label, format!("coverage dropped `{item_path}`"))
         }
         Finding::Unreconciled { req_label } => Reason::Req(req_label, "unreconciled".to_string()),
+        Finding::ExternalReexport { req_label, item_path } => {
+            Reason::Req(req_label, format!("external re-export `{item_path}`"))
+        }
         Finding::OrphanAnnotation { label, item_path } => Reason::Orphan(label, item_path),
     }
 }
@@ -173,6 +176,7 @@ mod tests {
             body: Some(body.into()),
             signature: None,
             evidence_seal: None,
+            external_reexport: false,
         }
     }
 

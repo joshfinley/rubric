@@ -81,6 +81,7 @@ mod tests {
             body: None,
             signature: None,
             evidence_seal: None,
+            external_reexport: false,
         }
     }
 

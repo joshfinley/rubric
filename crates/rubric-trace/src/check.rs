@@ -51,8 +51,15 @@ pub struct Citation {
     pub origin: Origin,
 }
 
-/// An item's source visibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// An item's visibility. After the `reach` derive pass runs, this holds the
+/// item's effective visibility, meaning whether it's reachable from the
+/// crate root through the module graph rather than what the token at its
+/// definition says.
+///
+/// The variants are ordered least-visible first, `Private < PubCrate < Pub`,
+/// so combining an item's visibility with its enclosing module's is just a
+/// `min`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Visibility {
     #[default]
     Private,
@@ -99,6 +106,11 @@ pub struct ItemFacts {
     /// filled by the loader (which does the I/O). `None` for source items
     /// and for evidence that could not be read.
     pub evidence_seal: Option<String>,
+    /// Set by `reach` when a `pub use` re-exports an out-of-crate item. The
+    /// entry sits on the public surface, but its body lives in another crate,
+    /// so there's nothing to seal. The oracle reports it as an
+    /// `ExternalReexport` instead of censusing it like a normal item.
+    pub external_reexport: bool,
 }
 
 /// Everything the scanner discovered, handed to the pure oracle.
@@ -143,6 +155,12 @@ pub enum Finding {
     /// A `reconcile` requirement's current leg seals do not match the
     /// recorded `<attest>` root. A leg was re-sealed without a subsequent `attest`.
     Unreconciled { req_label: String },
+    /// A `pub use` of an out-of-crate item has landed in a cover pointcut's
+    /// surface. Its body lives in another crate, so there's nothing to seal.
+    /// The author has to acknowledge it. An `accept` records an existence
+    /// seal that clears the finding, and until that happens the entry can't
+    /// pass through the surface unnoticed.
+    ExternalReexport { req_label: String, item_path: String },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -157,7 +175,7 @@ impl Report {
 }
 
 /// Run the full check set as a pure function over the scanned facts.
-// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE, CHECK-EXTSEAL, CHECK-COVERDROP
+// satisfies: CHECK-COVERAGE, CHECK-RESOLVE, CHECK-SEAL, CHECK-LIVE, CHECK-ORPHAN, CHECK-KIND, CHECK-COVER, CHECK-RECONCILE, CHECK-MISPLACED, CHECK-SEALMODE, CHECK-EXTSEAL, CHECK-COVERDROP, CHECK-EXTREEXPORT
 pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
     let reqs: BTreeMap<&str, &Requirement> =
         manifest.requirements.iter().map(|r| (r.label.as_str(), r)).collect();
@@ -235,6 +253,19 @@ pub fn check(manifest: &Manifest, lock: &Lock, scan: &Scan) -> Report {
 
         // Whether this citation comes from the requirement's cover pointcut.
         let covered = req.cover.as_ref().is_some_and(|pc| pc.matches(item));
+
+        // An out-of-crate re-export in the covered surface can't be sealed.
+        // Report it until it's acknowledged. An accepted existence seal
+        // clears it.
+        if item.external_reexport {
+            if covered && rendered_seal(&seals, &c.req_label, &c.item_path) == ABSENT {
+                findings.push(Finding::ExternalReexport {
+                    req_label: c.req_label.clone(),
+                    item_path: c.item_path.clone(),
+                });
+            }
+            continue;
+        }
 
         // Check 7: kind violation (satisfies on an invariant). Cover-pointcut
         // matches are exempt: a pointcut binds items as satisfiers regardless of kind.
@@ -450,6 +481,7 @@ mod tests {
             body: body.map(|s| s.into()),
             signature: None,
             evidence_seal: None,
+            external_reexport: false,
         }
     }
 
@@ -981,5 +1013,106 @@ mod tests {
             items: vec![item("external:docs/proof.pdf", true, false, false, None)],
         };
         assert!(check(&m, &lock, &scan).is_clean());
+    }
+
+    // verifies: CHECK-EXTREEXPORT
+    #[test]
+    fn external_reexport_fires_until_acknowledged() {
+        let m = manifest::parse(
+            "[req.SURFACE]\nkind = \"invariant\"\nstatement = \"s\"\nseal = \"full\"\n\
+             cover = \"pub within crate\"\nverified_by = [\"crate::tests::t\"]\n",
+        )
+        .unwrap();
+        // A flagged, contentless out-of-crate re-export in the covered scope.
+        let mut alias = item("crate::Serialize", true, false, false, None);
+        alias.vis = Visibility::Pub;
+        alias.external_reexport = true;
+        let scan = Scan {
+            citations: vec![
+                cite("SURFACE", "crate::Serialize", Direction::Satisfies, Origin::Declared),
+                cite("SURFACE", "crate::tests::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![alias, item("crate::tests::t", true, true, false, Some("ok"))],
+        };
+        let stmt = Lock {
+            entries: vec![hash_entry("SURFACE", STATEMENT_MARKER, Origin::Declared,
+                parse_seal(&hash::statement_seal("s")))],
+        };
+
+        // Unacknowledged: the finding fires, and not as Uncovered/SealMode.
+        let r = check(&m, &stmt, &scan);
+        assert!(r.findings.contains(&Finding::ExternalReexport {
+            req_label: "SURFACE".into(),
+            item_path: "crate::Serialize".into(),
+        }));
+        assert!(!r.findings.iter().any(|f| matches!(f,
+            Finding::Uncovered { .. } | Finding::SealModeMismatch { .. })));
+
+        // An accepted existence (Off) seal acknowledges it: the finding clears.
+        let mut ack = stmt.clone();
+        ack.entries.push(hash_entry("SURFACE", "crate::Serialize", Origin::Declared, Seal::Off));
+        assert!(!check(&m, &ack, &scan)
+            .findings
+            .iter()
+            .any(|f| matches!(f, Finding::ExternalReexport { .. })));
+    }
+
+    // Pinned behavior: adding a re-export widens the surface, so a reconcile
+    // requirement's attestation root changes and it goes Unreconciled until
+    // re-attested. (See the design note on reconcile flips.)
+    #[test]
+    fn adding_a_reexport_leg_changes_a_reconcile_root() {
+        let m = manifest::parse(
+            "[req.R]\nkind = \"functional\"\nstatement = \"s\"\nreconcile = true\n",
+        )
+        .unwrap();
+        let req = &m.requirements[0];
+        let base = Scan {
+            citations: vec![
+                cite("R", "crate::f", Direction::Satisfies, Origin::Annotation),
+                cite("R", "crate::t", Direction::Verifies, Origin::Annotation),
+            ],
+            items: vec![
+                item("crate::f", true, false, false, Some("b")),
+                item("crate::t", true, true, false, Some("tb")),
+            ],
+        };
+        let before = root(req, &base);
+
+        // A re-export of `f` as `crate::g` adds a leg sealing the same content.
+        let mut widened = base.clone();
+        widened.citations.push(cite("R", "crate::g", Direction::Satisfies, Origin::Declared));
+        widened.items.push(item("crate::g", true, false, false, Some("b")));
+        assert_ne!(before, root(req, &widened));
+    }
+
+    // Pinned behavior: deleting a `pub use` takes its alias out of the scan
+    // completely. The CoverageDropped sweep only walks live items, so it
+    // never visits the alias. A real `pub fn` demoted in place would be a
+    // different story. Shrinking the surface is the safe direction anyway,
+    // and a reconcile root change still catches it.
+    #[test]
+    fn deleting_a_reexport_does_not_fire_coverage_dropped() {
+        let m = manifest::parse(
+            "[req.API]\nkind = \"invariant\"\nstatement = \"s\"\nseal = \"signature\"\n\
+             cover = \"pub fn within crate\"\nverified_by = [\"crate::tests::t\"]\n",
+        )
+        .unwrap();
+        // The lock still seals the now-deleted alias. The scan has no such
+        // item, and nothing cites it.
+        let lock = Lock {
+            entries: vec![
+                hash_entry("API", STATEMENT_MARKER, Origin::Declared,
+                    parse_seal(&hash::statement_seal("s"))),
+                hash_entry("API", "crate::backdoor", Origin::Declared,
+                    parse_seal(&hash::signature_seal("pub fn backdoor ( )"))),
+            ],
+        };
+        let scan = Scan {
+            citations: vec![cite("API", "crate::tests::t", Direction::Verifies, Origin::Annotation)],
+            items: vec![item("crate::tests::t", true, true, false, Some("ok"))],
+        };
+        assert!(!check(&m, &lock, &scan).findings.iter().any(|f| matches!(f,
+            Finding::CoverageDropped { item_path, .. } if item_path == "crate::backdoor")));
     }
 }

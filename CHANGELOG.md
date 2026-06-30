@@ -3,6 +3,50 @@
 This project follows [Semantic Versioning](https://semver.org/). Pre-1.0, a
 bump of the minor version may carry breaking changes.
 
+## 0.3.0
+
+Makes `cover` pointcuts model _effective_ visibility — reachability from the
+crate root — so the surface a requirement seals matches the surface the crate
+actually exposes, and `pub use` re-exports can no longer hide a back door from
+the census.
+
+### Added
+
+- **Effective visibility.** A pointcut's `pub`/`pub(crate)` predicate now means
+  reachability from the crate root, not the syntactic token at the definition
+  site. A `pub fn` sealed behind a private module is no longer part of a
+  `pub within` surface; `any` still covers items regardless of reachability.
+- **Re-export tracking.** A `pub use` re-export is surfaced as an item at its
+  re-exported path, with the seal bound to the target's content. A `pub fn`
+  buried in a private module and re-exported into the public API is caught at
+  the re-exported path, where syntactic visibility alone missed it. Renames,
+  groups, `self`/`super`/`crate` roots, globs (`pub use foo::*`), and chained
+  re-exports are resolved within the crate; `#[path]` modules and
+  macro-generated `use` are not modeled.
+- **`ExternalReexport` finding.** A `pub use` of an out-of-crate item enters the
+  surface as an unsealable entry — its body lives in another crate — and is
+  reported until acknowledged by an `accept`, so no external entry point slips
+  in unnoticed.
+
+### Changed
+
+- **Breaking (`rubric-trace` library):** `ItemFacts` gains `external_reexport`,
+  and its `vis` now carries _effective_ (not syntactic) visibility after the new
+  `reach` pass; `Visibility` derives `Ord`. `Finding` gains `ExternalReexport`.
+  A new `pub mod reach` exposes `ReexportEdge` and `lower`, the pure derive pass
+  the scanner runs before the oracle.
+- The meaning of an unchanged `cover = "pub within …"` may shift: items
+  reachable only through a private module leave the surface, and re-exported
+  items enter it.
+
+### Migration
+
+Existing projects stay green until they opt into `cover`. Where they do, run
+`cargo rubric accept` once after upgrading: a pointcut may now report
+re-exported items as uncovered and private-module items as dropped coverage. For
+`reconcile` requirements, run `cargo rubric attest` to re-seed the root. To
+cover items regardless of reachability, use the `any` predicate.
+
 ## 0.2.0
 
 Adds aspect-oriented coverage and attestation on top of the 0.1.x attribution

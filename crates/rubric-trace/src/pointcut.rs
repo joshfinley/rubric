@@ -113,7 +113,11 @@ impl Pointcut {
     /// Whether a scanned item is one of this pointcut's join points.
     // satisfies: POINTCUT-MATCH
     pub fn matches(&self, item: &ItemFacts) -> bool {
-        self.vis_ok(item.vis) && self.kind_ok(item.kind) && self.scope_ok(&item.path)
+        // A cross-crate re-export's kind isn't known here, so it's matched on
+        // visibility and scope alone. The oracle reports it as an
+        // `ExternalReexport` instead of censusing it by kind.
+        let kind_ok = item.external_reexport || self.kind_ok(item.kind);
+        self.vis_ok(item.vis) && kind_ok && self.scope_ok(&item.path)
     }
 
     fn vis_ok(&self, v: Visibility) -> bool {
@@ -151,6 +155,7 @@ mod tests {
             body: None,
             signature: None,
             evidence_seal: None,
+            external_reexport: false,
         }
     }
 

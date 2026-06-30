@@ -224,6 +224,17 @@ relations but from opposite ends. As a project evolves, a new `pub` would not si
 escape the rule because `check` reports such items as uncovered until accepted while
 signature seals catch private items that are turned public later on.
 
+The `pub` and `pub(crate)` predicates ask about _effective_ visibility: whether an item is
+really reachable from the crate root, not just which token sits at its definition. A `pub fn`
+hidden inside a private module is not reachable, so it falls outside a `pub within` surface.
+The `any` predicate ignores all of this and covers items either way.
+
+Re-exports are surface too. A `pub use` is censused at the path it re-exports to, and its
+seal is bound to whatever it points at. So a back door re-exported into the public API gets
+caught there, even though the token at its own definition still looks private. A re-export
+that points out of the crate has nothing local to seal, so Rubric reports it until someone
+acknowledges it.
+
 ## The Seal
 
 Rubric seals are scheme-tagged content hashes (FNV-1a 64) of normalized input with one chain

@@ -29,6 +29,7 @@ use rubric_trace::check::{Citation, Direction, ItemFacts, ItemKind, Scan, Visibi
 use rubric_trace::lock::Origin;
 use rubric_trace::manifest::Manifest;
 use rubric_trace::normalize;
+use rubric_trace::reach;
 use rustc_lexer::{tokenize, TokenKind};
 
 /// One source file with its module path prefix (e.g. `["crate", "voter"]`).
@@ -43,6 +44,7 @@ pub struct FileInput {
 pub fn scan_files(files: &[FileInput], manifest: &Manifest) -> Scan {
     let mut items: BTreeMap<String, ItemFacts> = BTreeMap::new();
     let mut citations: Vec<Citation> = Vec::new();
+    let mut edges: Vec<reach::ReexportEdge> = Vec::new();
 
     for f in files {
         let parsed = parse(&f.module_path, &f.source);
@@ -57,7 +59,19 @@ pub fn scan_files(files: &[FileInput], manifest: &Manifest) -> Scan {
                 origin: Origin::Annotation,
             });
         }
+        edges.extend(parsed.edges);
     }
+
+    // Work out effective visibility across the whole crate and add the
+    // re-export aliases, before any pointcut runs. An item reachable only
+    // through a private module has its visibility reduced, and a `pub use`
+    // re-export shows up as an item at the path it's re-exported to. A
+    // `pub within ...` census then reflects the real public surface. The map
+    // is re-keyed by item path, since the aliases carry their re-exported path.
+    let mut items: BTreeMap<String, ItemFacts> = reach::lower(items.into_values().collect(), &edges)
+        .into_iter()
+        .map(|i| (i.path.clone(), i))
+        .collect();
 
     // Declared citations from the manifest.
     for r in &manifest.requirements {
@@ -125,6 +139,7 @@ pub fn scan_files(files: &[FileInput], manifest: &Manifest) -> Scan {
                 body: None,
                 signature: None,
                 evidence_seal: None,
+                external_reexport: false,
             },
         );
     }
@@ -147,6 +162,7 @@ fn dir_ord(d: Direction) -> u8 {
 struct ParsedFile {
     items: Vec<ItemFacts>,
     annotations: Vec<(String, String, Direction)>,
+    edges: Vec<reach::ReexportEdge>,
 }
 
 fn parse(module_path: &[String], src: &str) -> ParsedFile {
@@ -160,9 +176,10 @@ fn parse(module_path: &[String], src: &str) -> ParsedFile {
         pending: Pending::default(),
         items: Vec::new(),
         annotations: Vec::new(),
+        edges: Vec::new(),
     };
     p.run();
-    ParsedFile { items: p.items, annotations: p.annotations }
+    ParsedFile { items: p.items, annotations: p.annotations, edges: p.edges }
 }
 
 #[derive(Clone, Copy)]
@@ -210,6 +227,7 @@ struct FileParser<'a> {
     pending: Pending,
     items: Vec<ItemFacts>,
     annotations: Vec<(String, String, Direction)>,
+    edges: Vec<reach::ReexportEdge>,
 }
 
 impl<'a> FileParser<'a> {
@@ -315,6 +333,7 @@ impl<'a> FileParser<'a> {
             "enum" => self.handle_item(ItemKind::Enum),
             "union" => self.handle_item(ItemKind::Union),
             "type" => self.handle_item(ItemKind::TypeAlias),
+            "use" => self.handle_use(),
             "pub" => self.handle_pub(),
             // `const fn` is a modifier. A bare `const`/`static` NAME is an item.
             "const" => match self.next_sig(self.i + 1) {
@@ -338,7 +357,7 @@ impl<'a> FileParser<'a> {
                 // Other item/statement starters end the attribute run.
                 if matches!(
                     other,
-                    "use" | "let" | "return" | "match" | "if" | "while" | "for" | "loop"
+                    "let" | "return" | "match" | "if" | "while" | "for" | "loop"
                 ) {
                     self.pending = Pending::default();
                 }
@@ -372,6 +391,68 @@ impl<'a> FileParser<'a> {
             }
         }
         self.pending.vis = vis;
+    }
+
+    /// Handle a `use` item. The whole `use ... ;` statement is read here, so
+    /// the parser never mistakes its `{ }` groups for a block. Only a `pub`
+    /// or `pub(...)` re-export can add to the crate's public API, so those are
+    /// the only ones recorded as re-export edges (`ReexportEdge`) for the
+    /// `reach` pass to resolve. A private `use` is skipped. A `use` inside a
+    /// function body never reaches this method, because `handle_fn` and
+    /// `handle_item` jump the cursor past those bodies.
+    fn handle_use(&mut self) {
+        let vis = self.pending.vis;
+        self.pending = Pending::default();
+
+        // A `use` tree has no `;` of its own, so the first one ends the item.
+        let start = self.i + 1;
+        let mut end = start;
+        while end < self.toks.len() && self.kind(end) != TokenKind::Semi {
+            end += 1;
+        }
+
+        if matches!(vis, Visibility::Pub | Visibility::PubCrate) {
+            let toks = self.use_tokens(start, end);
+            let mut pos = 0;
+            parse_use_tree(&toks, &mut pos, &[], &self.path, vis, &mut self.edges);
+        }
+
+        self.i = (end + 1).min(self.toks.len());
+    }
+
+    /// Significant tokens of a `use` tree in `[start, end)`, mapped to the
+    /// small grammar `parse_use_tree` walks (with `::` collapsed to one `Sep`).
+    fn use_tokens(&self, start: usize, end: usize) -> Vec<UseTok> {
+        let mut out = Vec::new();
+        let mut j = start;
+        while j < end {
+            let k = self.kind(j);
+            if is_trivia(k) {
+                j += 1;
+                continue;
+            }
+            match k {
+                TokenKind::Colon => {
+                    // Collapse `::`. A lone `:` shouldn't show up in a use tree.
+                    if j + 1 < end && self.kind(j + 1) == TokenKind::Colon {
+                        out.push(UseTok::Sep);
+                        j += 2;
+                        continue;
+                    }
+                }
+                TokenKind::OpenBrace => out.push(UseTok::LBrace),
+                TokenKind::CloseBrace => out.push(UseTok::RBrace),
+                TokenKind::Comma => out.push(UseTok::Comma),
+                TokenKind::Star => out.push(UseTok::Star),
+                TokenKind::Ident | TokenKind::RawIdent => {
+                    let s = self.slice(j);
+                    out.push(if s == "as" { UseTok::As } else { UseTok::Name(s.to_string()) });
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        out
     }
 
     /// `name!( ... )` / `name! { ... }` / `name![ ... ]`, skip whole.
@@ -558,6 +639,7 @@ impl<'a> FileParser<'a> {
             body: None,
             signature: Some(self.normalize_range(sig_start, sig_end)),
             evidence_seal: None,
+            external_reexport: false,
         });
     }
 
@@ -716,6 +798,7 @@ impl<'a> FileParser<'a> {
             body,
             signature,
             evidence_seal: None,
+            external_reexport: false,
         });
         self.i = after;
     }
@@ -766,6 +849,7 @@ impl<'a> FileParser<'a> {
             body: None,
             signature,
             evidence_seal: None,
+            external_reexport: false,
         });
         self.i = after;
     }
@@ -863,6 +947,95 @@ impl<'a> FileParser<'a> {
             .filter(|&j| !is_trivia(self.kind(j)))
             .map(|j| self.slice(j));
         normalize::body_from_tokens(toks)
+    }
+}
+
+/// One token of a `use` tree, after `::` has been collapsed to `Sep`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UseTok {
+    Sep,
+    Name(String),
+    LBrace,
+    RBrace,
+    Comma,
+    Star,
+    As,
+}
+
+/// Recursive descent over a `use` tree, emitting one `ReexportEdge` per leaf
+/// and per glob. `prefix` gathers the path segments seen so far, so a nested
+/// group inherits its parent's path. `in_module` is the module the `use`
+/// appears in. Targets are left relative, and `reach` works out the root.
+fn parse_use_tree(
+    toks: &[UseTok],
+    pos: &mut usize,
+    prefix: &[String],
+    in_module: &[String],
+    vis: Visibility,
+    out: &mut Vec<reach::ReexportEdge>,
+) {
+    let mut prefix = prefix.to_vec();
+    loop {
+        match toks.get(*pos) {
+            // A leading `::` marks an extern root. Skip it, and leave the path external.
+            Some(UseTok::Sep) => *pos += 1,
+            Some(UseTok::Star) => {
+                *pos += 1;
+                out.push(reach::ReexportEdge {
+                    in_module: in_module.to_vec(),
+                    path: prefix.clone(),
+                    alias: String::new(),
+                    vis,
+                    glob: true,
+                });
+                return;
+            }
+            Some(UseTok::LBrace) => {
+                *pos += 1;
+                loop {
+                    if let Some(UseTok::RBrace) = toks.get(*pos) {
+                        *pos += 1;
+                        return;
+                    }
+                    parse_use_tree(toks, pos, &prefix, in_module, vis, out);
+                    match toks.get(*pos) {
+                        Some(UseTok::Comma) => *pos += 1,
+                        _ => {
+                            // Consume a trailing `}` if present, then stop.
+                            if let Some(UseTok::RBrace) = toks.get(*pos) {
+                                *pos += 1;
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+            Some(UseTok::Name(n)) => {
+                let name = n.clone();
+                // An intermediate segment is followed by `::`.
+                if let Some(UseTok::Sep) = toks.get(*pos + 1) {
+                    prefix.push(name);
+                    *pos += 2;
+                    continue;
+                }
+                // Otherwise it's the leaf, with an optional `as <rename>`.
+                *pos += 1;
+                let mut alias = name.clone();
+                if let Some(UseTok::As) = toks.get(*pos) {
+                    if let Some(UseTok::Name(rename)) = toks.get(*pos + 1) {
+                        alias = rename.clone();
+                        *pos += 2;
+                    } else {
+                        *pos += 1;
+                    }
+                }
+                let mut path = prefix.clone();
+                path.push(name);
+                out.push(reach::ReexportEdge { in_module: in_module.to_vec(), path, alias, vis, glob: false });
+                return;
+            }
+            _ => return,
+        }
     }
 }
 
@@ -1287,5 +1460,92 @@ pub type Alias = u8;
         };
         assert!(cited("crate::connect")); // pub fn matched the pointcut
         assert!(!cited("crate::helper")); // private fn did not
+    }
+
+    /// A `pub fn` inside a private module isn't reachable, so reducing it to
+    /// its effective visibility keeps it out of a `pub` census. This is the
+    /// false-positive fix, exercised through the real `scan_files` pipeline.
+    fn cover_scan(source: &str, pointcut: &str) -> Scan {
+        let files = vec![FileInput { module_path: vec!["crate".to_string()], source: source.into() }];
+        let m = rubric_trace::manifest::parse(&format!(
+            "[req.API]\nkind=\"invariant\"\nstatement=\"s\"\ncover=\"{pointcut}\"\n"
+        ))
+        .unwrap();
+        scan_files(&files, &m)
+    }
+
+    fn covered(scan: &Scan, path: &str) -> bool {
+        scan.citations.iter().any(|c| {
+            c.req_label == "API" && c.item_path == path && c.direction == Direction::Satisfies
+        })
+    }
+
+    #[test]
+    fn pub_fn_in_private_module_is_not_covered_by_pub_pointcut() {
+        let src = "pub fn connect() {}\nmod internal { pub fn backdoor() {} }\n";
+        let scan = cover_scan(src, "pub fn within crate");
+        assert!(covered(&scan, "crate::connect")); // reachable
+        assert!(!covered(&scan, "crate::internal::backdoor")); // not reachable
+    }
+
+    #[test]
+    fn any_pointcut_still_covers_a_private_modules_pub_fn() {
+        // The `any` escape hatch covers items regardless of reachability.
+        let src = "mod internal { pub fn backdoor() {} }\n";
+        let scan = cover_scan(src, "any fn within crate");
+        assert!(covered(&scan, "crate::internal::backdoor"));
+    }
+
+    #[test]
+    fn pub_use_reexport_is_covered_at_its_reexported_path() {
+        // The false-negative fix. A back door re-exported out of a private
+        // module is censused at its public path. The def-site copy is not.
+        let src = "mod internal { pub fn backdoor() {} }\npub use crate::internal::backdoor;\n";
+        let scan = cover_scan(src, "pub fn within crate");
+        assert!(covered(&scan, "crate::backdoor"));
+        assert!(!covered(&scan, "crate::internal::backdoor"));
+    }
+
+    #[test]
+    fn pub_use_rename_is_covered_at_the_renamed_path() {
+        let src = "mod internal { pub fn backdoor() {} }\npub use crate::internal::backdoor as front;\n";
+        let scan = cover_scan(src, "pub fn within crate");
+        assert!(covered(&scan, "crate::front"));
+    }
+
+    #[test]
+    fn pub_use_group_reexports_each_member() {
+        let src = "mod m { pub fn a() {} pub fn b() {} }\npub use crate::m::{a, b};\n";
+        let scan = cover_scan(src, "pub fn within crate");
+        assert!(covered(&scan, "crate::a"));
+        assert!(covered(&scan, "crate::b"));
+    }
+
+    #[test]
+    fn pub_crate_use_alias_matches_pub_crate_pointcut_not_pub() {
+        let src = "mod internal { pub fn x() {} }\npub(crate) use crate::internal::x;\n";
+        assert!(!covered(&cover_scan(src, "pub fn within crate"), "crate::x"));
+        assert!(covered(&cover_scan(src, "pub(crate) fn within crate"), "crate::x"));
+    }
+
+    #[test]
+    fn body_local_use_is_not_a_reexport() {
+        // A `use` inside a fn body never reaches the item walk, so it cannot
+        // synthesize an alias.
+        let src = "pub fn f() { use std::mem; let _ = 0; }\n";
+        let scan = cover_scan(src, "pub fn within crate");
+        assert!(covered(&scan, "crate::f"));
+        assert!(scan.items.iter().all(|i| i.path != "crate::mem"));
+    }
+
+    #[test]
+    fn extern_pub_use_in_a_covered_surface_is_flagged() {
+        // An out-of-crate re-export lands in the surface as a flagged,
+        // unsealable alias and is cited so the oracle can report it.
+        let src = "pub use serde::Serialize;\n";
+        let scan = cover_scan(src, "pub within crate");
+        let alias = scan.items.iter().find(|i| i.path == "crate::Serialize").expect("flagged alias");
+        assert!(alias.external_reexport);
+        assert!(covered(&scan, "crate::Serialize"));
     }
 }

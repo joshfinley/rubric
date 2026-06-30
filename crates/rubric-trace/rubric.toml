@@ -46,6 +46,18 @@ kind = "functional"
 statement = "A pointcut matches an item when its visibility, kind, and module scope all satisfy the designator"
 reconcile = true
 
+# --- Effective visibility and re-exports ---
+
+[req.REACH-VIS]
+kind = "functional"
+statement = "An item's effective visibility is its own capped by every enclosing container, so an item reachable only through a private module is not public"
+reconcile = true
+
+[req.REACH-REEXPORT]
+kind = "functional"
+statement = "A pub use re-export is surfaced as an item at its re-exported path sealing the target's content, while an out-of-crate re-export is flagged as unsealable"
+reconcile = true
+
 # --- The oracle ---
 
 [req.CHECK-COVERAGE]
@@ -106,4 +118,9 @@ reconcile = true
 [req.CHECK-RECONCILE]
 kind = "functional"
 statement = "A reconcile requirement whose current leg seals do not match its recorded attestation root is reported as unreconciled"
+reconcile = true
+
+[req.CHECK-EXTREEXPORT]
+kind = "functional"
+statement = "An out-of-crate re-export in a covered surface is reported until acknowledged by an existence seal"
 reconcile = true
