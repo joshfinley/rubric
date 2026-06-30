@@ -4,9 +4,9 @@ Rubric is *coherence infrastructure* for software development in Rust.
 
 ## Status
 
-Rubric follows [Semantic Versioning](https://semver.org/). The current version is v0.2.0 pre-release.
+Rubric follows [Semantic Versioning](https://semver.org/). The current version is v0.3.1 pre-release.
 While Rubric's public interfaces and behavior are subject to change, any and all feedback (via [GitHub Issues](https://github.com/joshfinley/rubric/issues)) from
-real-world project use on the v0.2.0 tag would be instrumental for progress to a v1.0.0 release,
+real-world project use on the v0.3.1 tag would be instrumental for progress to a v1.0.0 release,
 and would be greatly appreciated.
 
 ## Motivation
