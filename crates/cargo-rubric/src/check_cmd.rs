@@ -123,5 +123,9 @@ fn describe(f: &Finding) -> (String, String) {
             "re-sealed but not attested; run `cargo rubric attest` once any other findings clear"
                 .to_string(),
         ),
+        Finding::ExternalReexport { req_label, item_path } => (
+            req_label.clone(),
+            format!("out-of-crate re-export cannot be sealed; review first, then run accept to acknowledge — {item_path}"),
+        ),
     }
 }

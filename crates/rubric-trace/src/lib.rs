@@ -12,4 +12,5 @@ pub mod lock;
 pub mod manifest;
 pub mod normalize;
 pub mod pointcut;
+pub mod reach;
 pub mod toml_lite;

@@ -15,5 +15,5 @@ name = "cargo-rubric"
 path = "src/main.rs"
 
 [dependencies]
-rubric-trace = { version = "0.2.0", path = "../rubric-trace" }
+rubric-trace = { version = "0.3.0", path = "../rubric-trace" }
 rustc_lexer = "0.1.0"
